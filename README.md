@@ -4,7 +4,6 @@ This package allows you to navigate between screen from one central page. You ca
 
 <img src="https://github.com/user-attachments/assets/e894941e-d5e9-4b49-8c37-5902917a8996" width="400">
 
-
 ## Features
 
 - Navigate to TopPage with scrolling top-to-bottom from top edge of the CenterPage. To navigate back, swipe bottom-to-top from bottom edge of the TopPage.
