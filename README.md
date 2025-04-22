@@ -1,39 +1,56 @@
-<!--
-This README describes the package. If you publish this package to pub.dev,
-this README's contents appear on the landing page for your package.
+# Five Page Navigation
 
-For information about how to write a good package README, see the guide for
-[writing package pages](https://dart.dev/tools/pub/writing-package-pages).
+This package allows you to navigate between screen from one central page. You can swipe up, down, left and right with ease.
 
-For general information about developing packages, see the Dart guide for
-[creating packages](https://dart.dev/guides/libraries/create-packages)
-and the Flutter guide for
-[developing packages and plugins](https://flutter.dev/to/develop-packages).
--->
-
-TODO: Put a short description of the package here that helps potential users
-know whether this package might be useful for them.
+![opd](https://github.com/user-attachments/assets/c436caa9-265a-49e7-b45f-e2077eec7b95)
 
 ## Features
 
-TODO: List what your package can do. Maybe include images, gifs, or videos.
+- Navigate to TopPage with scrolling top-to-bottom from top edge of the CenterPage. To navigate back, swipe bottom-to-top from bottom edge of the TopPage.
+- Navigate to LeftPage with scrolling left-to-right from left edge of the CenterPage. To navigate back, swipe right-to-left from right edge of the LeftPage.
+- Navigate to BottomPage with scrolling bottom-to-top from bottom edge of the CenterPage. To navigate back, swipe top-to-bottom from top edge of the BottomPage.
+- Navigate to RightPage with scrolling right-to-left from right edge of the CenterPage. To navigate back, swipe left-to-right from left edge of the RightPage.
+- You can control swipe threshold, animation durations and more.
 
 ## Getting started
 
-TODO: List prerequisites and provide or point to information on how to
-start using the package.
+In the `pubspec.yaml` of your flutter project, add the following dependency:
+
+```yaml
+dependencies:
+  five_page_navigation: ^latest
+```
+
+Import these:
+
+```dart
+import 'package:five_page_navigation/five_page_navigation.dart';
+```
 
 ## Usage
 
-TODO: Include short and useful examples for package users. Add longer examples
-to `/example` folder.
+You can use sample code below.
 
 ```dart
-const like = 'sample';
+class BasePage extends StatelessWidget {
+  const BasePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return FivePageNavigator(
+      centerPage: CenterPage(),
+      leftPage: LeftPage(),
+      rightPage: RightPage(),
+      topPage: TopPage(),
+      bottomPage: BottomPage(),
+      enableLeftPageSwipeBack: true,
+      enableBottomPageSwipeBack: true,
+      enableRightPageSwipeBack: true,
+      enableTopPageSwipeBack: true,
+    );
+  }
+}
 ```
 
-## Additional information
-
-TODO: Tell users more about the package: where to find more information, how to
-contribute to the package, how to file issues, what response they can expect
-from the package authors, and more.
+Also you can check whole example code here:
+[OverlayPopupDialog Github Link](https://github.com/metekaganmusaak/five_page_navigation/blob/main/example/lib/main.dart)

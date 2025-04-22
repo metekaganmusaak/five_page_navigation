@@ -39,6 +39,10 @@ class BasePage extends StatelessWidget {
       rightPage: RightPage(),
       topPage: TopPage(),
       bottomPage: BottomPage(),
+      enableLeftPageSwipeBack: true,
+      enableBottomPageSwipeBack: true,
+      enableRightPageSwipeBack: true,
+      enableTopPageSwipeBack: true,
     );
   }
 }
