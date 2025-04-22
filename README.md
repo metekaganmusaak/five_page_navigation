@@ -2,7 +2,8 @@
 
 This package allows you to navigate between screen from one central page. You can swipe up, down, left and right with ease.
 
-![opd](https://github.com/user-attachments/assets/c436caa9-265a-49e7-b45f-e2077eec7b95)
+<img src="https://github.com/user-attachments/assets/e894941e-d5e9-4b49-8c37-5902917a8996" width="400">
+
 
 ## Features
 
@@ -51,6 +52,3 @@ class BasePage extends StatelessWidget {
   }
 }
 ```
-
-Also you can check whole example code here:
-[OverlayPopupDialog Github Link](https://github.com/metekaganmusaak/five_page_navigation/blob/main/example/lib/main.dart)
