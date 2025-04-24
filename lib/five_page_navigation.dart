@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'dart:ui' show lerpDouble; // Used for linear interpolation
+import 'dart:ui' show lerpDouble;
+
+import 'package:flutter/services.dart'; // Used for linear interpolation
 
 /// Represents the direction of a swipe gesture.
 ///
@@ -135,6 +137,7 @@ class FivePageNavigator extends StatefulWidget {
 /// The state for [FivePageNavigator], managing animations, gestures, and page transitions.
 class _FivePageNavigatorState extends State<FivePageNavigator>
     with TickerProviderStateMixin {
+  bool _hasTriggerHapticFeedback = false;
   // --- Animation Controllers ---
 
   /// Controller for the initial zoom-out animation.
@@ -239,6 +242,9 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
       return;
     }
 
+    // Reset haptic feedback flag at the start of a new drag
+    _hasTriggerHapticFeedback = false;
+
     // Store the starting position and reset state for a new drag
     _dragStartPosition = details.localPosition;
     _currentSwipeDirection = null; // Direction is determined on first update
@@ -267,6 +273,17 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
       _determineSwipeDirection(details, screenSize);
       // If direction is determined, the AnimatedBuilder will start reacting
       // as soon as the controller value is updated below.
+    }
+
+    // After _swipeTransitionController.value is updated, check if we've crossed the threshold
+    if (_swipeTransitionController.value >= widget.swipeThreshold &&
+        !_hasTriggerHapticFeedback) {
+      HapticFeedback.mediumImpact();
+      // Set flag to true to prevent repeated triggers
+      _hasTriggerHapticFeedback = true;
+    } else if (_swipeTransitionController.value < widget.swipeThreshold) {
+      // Reset flag if we go back below threshold
+      _hasTriggerHapticFeedback = false;
     }
 
     // If a valid swipe direction has been determined, update the swipe progress
@@ -379,6 +396,8 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
       }
       return;
     }
+
+    _hasTriggerHapticFeedback = false;
 
     // Use the current value of the controller (which reflects _swipeProgress.abs())
     // to check against the threshold.
@@ -1111,6 +1130,8 @@ class _PageWrapperState extends State<PageWrapper>
   /// True if a valid swipe-back drag is currently in progress.
   bool _isSwipeBackDragging = false;
 
+  bool _hasTriggerHapticFeedback = false;
+
   // --- Lifecycle Methods ---
 
   @override
@@ -1232,6 +1253,16 @@ class _PageWrapperState extends State<PageWrapper>
         break;
     }
 
+    // After _swipeBackController.value is updated, check for threshold crossing
+    if (_swipeBackController.value >= 0.5 && !_hasTriggerHapticFeedback) {
+      HapticFeedback.mediumImpact();
+      // Set flag to true to prevent repeated triggers
+      _hasTriggerHapticFeedback = true;
+    } else if (_swipeBackController.value < 0.5) {
+      // Reset flag if we go back below threshold
+      _hasTriggerHapticFeedback = false;
+    }
+
     // Calculate the progress as a fraction of the screen size, clamped between 0.0 and 1.0.
     progress = (delta / maxSize).clamp(0.0, 1.0);
 
@@ -1251,6 +1282,7 @@ class _PageWrapperState extends State<PageWrapper>
 
     // Reset the dragging flag regardless of whether animation completes or snaps back.
     _isSwipeBackDragging = false;
+    _hasTriggerHapticFeedback = false;
 
     // Check if the swipe progress exceeded the halfway point.
     if (_swipeBackController.value >= 0.5) {
