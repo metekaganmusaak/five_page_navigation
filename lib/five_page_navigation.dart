@@ -25,6 +25,12 @@ enum PageType {
   bottom, // The page located below the center.
 }
 
+enum ThresholdFeedback {
+  lightImpact,
+  mediumImpact,
+  heavyImpact;
+}
+
 /// A custom navigator widget that allows swiping between a center page
 /// and four surrounding pages (left, right, top, bottom).
 ///
@@ -120,6 +126,8 @@ class FivePageNavigator extends StatefulWidget {
   /// Return true to allow the swipe, false to block it.
   final bool Function()? canSwipeFromCenter;
 
+  final ThresholdFeedback thresholdFeedback;
+
   /// Constructs a [FivePageNavigator].
   const FivePageNavigator({
     super.key,
@@ -141,6 +149,7 @@ class FivePageNavigator extends StatefulWidget {
     this.enableBottomPageSwipeBack = false,
     this.initialViewScale = 1.0,
     this.canSwipeFromCenter,
+    this.thresholdFeedback = ThresholdFeedback.heavyImpact,
   });
 
   @override
@@ -299,7 +308,14 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
     // After _swipeTransitionController.value is updated, check if we've crossed the threshold
     if (_swipeTransitionController.value >= widget.swipeThreshold &&
         !_hasTriggerHapticFeedback) {
-      HapticFeedback.mediumImpact();
+      if (widget.thresholdFeedback == ThresholdFeedback.lightImpact) {
+        HapticFeedback.lightImpact();
+      } else if (widget.thresholdFeedback == ThresholdFeedback.mediumImpact) {
+        HapticFeedback.mediumImpact();
+      } else if (widget.thresholdFeedback == ThresholdFeedback.heavyImpact) {
+        HapticFeedback.heavyImpact();
+      }
+
       // Set flag to true to prevent repeated triggers
       _hasTriggerHapticFeedback = true;
     } else if (_swipeTransitionController.value < widget.swipeThreshold) {
@@ -1120,6 +1136,8 @@ class PageWrapper extends StatefulWidget {
 
   final Widget centerPage;
 
+  final ThresholdFeedback thresholdFeedback;
+
   /// Creates a [PageWrapper].
   const PageWrapper({
     super.key,
@@ -1128,6 +1146,7 @@ class PageWrapper extends StatefulWidget {
     this.onReturnFromPage,
     this.enableSwipeBack = false,
     required this.centerPage,
+    this.thresholdFeedback = ThresholdFeedback.heavyImpact,
   });
 
   @override
@@ -1278,7 +1297,13 @@ class _PageWrapperState extends State<PageWrapper>
 
     // After _swipeBackController.value is updated, check for threshold crossing
     if (_swipeBackController.value >= 0.5 && !_hasTriggerHapticFeedback) {
-      HapticFeedback.mediumImpact();
+      if (widget.thresholdFeedback == ThresholdFeedback.lightImpact) {
+        HapticFeedback.lightImpact();
+      } else if (widget.thresholdFeedback == ThresholdFeedback.mediumImpact) {
+        HapticFeedback.mediumImpact();
+      } else if (widget.thresholdFeedback == ThresholdFeedback.heavyImpact) {
+        HapticFeedback.heavyImpact();
+      }
       // Set flag to true to prevent repeated triggers
       _hasTriggerHapticFeedback = true;
     } else if (_swipeBackController.value < 0.5) {
