@@ -109,6 +109,17 @@ class FivePageNavigator extends StatefulWidget {
   /// to return to the center page. Defaults to false.
   final bool enableBottomPageSwipeBack;
 
+  /// The initial scale factor for the center page during the zoom-out animation.
+  ///
+  /// This value is used to determine the initial size of the center page
+  /// before the zoom-out animation begins. Defaults to 1.0 (full size).
+  final double initialViewScale;
+
+  /// Whether swipe gestures from center page are allowed.
+  /// This callback is called before processing any swipe gesture.
+  /// Return true to allow the swipe, false to block it.
+  final bool Function()? canSwipeFromCenter;
+
   /// Constructs a [FivePageNavigator].
   const FivePageNavigator({
     super.key,
@@ -118,7 +129,7 @@ class FivePageNavigator extends StatefulWidget {
     required this.topPage,
     required this.bottomPage,
     this.animationDuration = const Duration(milliseconds: 300),
-    this.initialWaitDuration = const Duration(milliseconds: 100),
+    this.initialWaitDuration = Duration.zero,
     this.swipeThreshold = 0.25,
     this.zoomOutScale = 1,
     this.onPageChanged,
@@ -128,6 +139,8 @@ class FivePageNavigator extends StatefulWidget {
     this.enableRightPageSwipeBack = false,
     this.enableTopPageSwipeBack = false,
     this.enableBottomPageSwipeBack = false,
+    this.initialViewScale = 1.0,
+    this.canSwipeFromCenter,
   });
 
   @override
@@ -242,13 +255,21 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
       return;
     }
 
-    // Reset haptic feedback flag at the start of a new drag
-    _hasTriggerHapticFeedback = false;
+    // Check if swipe is enabled by calling the provided callback
+    // If callback is not provided, default to allowing swipe (true)
+    bool canSwipe = widget.canSwipeFromCenter?.call() ?? true;
+    if (!canSwipe) {
+      // Prevent swipe by not setting drag start position
+      _dragStartPosition = null;
+      return;
+    }
 
     // Store the starting position and reset state for a new drag
     _dragStartPosition = details.localPosition;
     _currentSwipeDirection = null; // Direction is determined on first update
     _swipeProgress = 0.0; // Start progress from zero
+    _hasTriggerHapticFeedback = false; // Reset haptic feedback flag
+
     // Reset controller value to 0 at the start of a new drag. This is
     // important if a previous animation was interrupted or didn't finish cleanly.
     _swipeTransitionController.value = 0.0;
@@ -813,24 +834,26 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
     final screenHeight = MediaQuery.sizeOf(context).height;
 
     // Constants for the initial layout
-    const double initialViewScale = 0.5; // Initial scale of all pages
+
     const double spacing = 15.0; // Spacing between pages in the initial view
 
     // Interpolate scale:
     // Side pages scale from initialViewScale down to near zero.
-    final sideScale = lerpDouble(initialViewScale, 0.0, animationProgress)!;
+    final sideScale =
+        lerpDouble(widget.initialViewScale, 0.0, animationProgress)!;
     // Center page scales from initialViewScale up to 1.0 (full screen).
-    final centerScale = lerpDouble(initialViewScale, 1.0, animationProgress)!;
+    final centerScale =
+        lerpDouble(widget.initialViewScale, 1.0, animationProgress)!;
 
     // Calculate initial positions of all pages in the zoomed-out view.
     // These are relative to the screen top-left.
-    final initialCenterWidth = screenWidth * initialViewScale;
-    final initialCenterHeight = screenHeight * initialViewScale;
+    final initialCenterWidth = screenWidth * widget.initialViewScale;
+    final initialCenterHeight = screenHeight * widget.initialViewScale;
     final initialCenterX = (screenWidth - initialCenterWidth) / 2;
     final initialCenterY = (screenHeight - initialCenterHeight) / 2;
 
-    final initialSideWidth = screenWidth * initialViewScale;
-    final initialSideHeight = screenHeight * initialViewScale;
+    final initialSideWidth = screenWidth * widget.initialViewScale;
+    final initialSideHeight = screenHeight * widget.initialViewScale;
 
     final initialLeftX = initialCenterX - initialSideWidth - spacing;
     final initialRightX = initialCenterX + initialCenterWidth + spacing;

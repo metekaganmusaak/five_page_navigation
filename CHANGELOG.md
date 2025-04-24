@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+
+* Add initial zoom scale variable to control beginning scaling.
+* Add swiping control variable to disable/enable swiping gestures inside CenterPage.
+
 ## 1.0.2
 
 * Implement haptic feedback when user triggers threshold while swiping.
