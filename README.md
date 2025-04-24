@@ -2,7 +2,7 @@
 
 This package allows you to navigate between screen from one central page. You can swipe up, down, left and right with ease.
 
-![fpnexample (1)](https://github.com/user-attachments/assets/a7eea80b-8d94-413a-8d81-03fbb072b96e)
+![Example](https://raw.githubusercontent.com/metekaganmusaak/five_page_navigation/main/assets/example.gif)
 
 ## Features
 
