@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+* Update ReadMe.
+
 ## 1.0.3
 
 * Add initial zoom scale variable to control beginning scaling.
