@@ -47,20 +47,38 @@ class BasePage extends StatelessWidget {
       enableBottomPageSwipeBack: true,
       enableRightPageSwipeBack: true,
       enableTopPageSwipeBack: true,
+      swipeThreshold: .2,
+      thresholdFeedback: ThresholdFeedback.heavyImpact,
+      animateCenterPageEntranceOpacity: true,
+      zoomOutScale: 1,
 
-      /// Initial wait duration before the first page is shown.
-      /// All screens will seen for a wait duration before
-      /// the first page (CenterPage) is shown.
-      initialWaitDuration: const Duration(milliseconds: 500),
+      verticalDetectionAreaHeight: 200,
+      horizontalDetectionAreaWidth: 100,
 
-      /// Initial view scale of the center page.
-      /// Defaults 1.0, no scaling. If initial view scale is set to 1.0,
-      /// initialWaitDuration is unnecessary to use.
-      initialViewScale: .5,
+      incomingPageOpacityStart: .2,
+      centerPageEntranceAnimationDuration: Duration(seconds: 1),
 
       /// You can control swiping feature of the CenterPage. Default, enabled.
       canSwipeFromCenter: () {
         return true;
+      },
+      onBottomPageOpened: () {
+        print('bottom page opened');
+      },
+      onLeftPageOpened: () {
+        print('left page opened');
+      },
+      onRightPageOpened: () {
+        print('right page opened');
+      },
+      onTopPageOpened: () async {
+        print('top page opened');
+      },
+      onReturnCenterPage: () {
+        print('return center page');
+      },
+      onPageChanged: (p0) {
+        print('page changed: $p0');
       },
     );
   }

@@ -93,6 +93,41 @@ class PagePreviewConfig {
   });
 }
 
+/// Configuration for the return to center button on side pages.
+class ReturnButtonConfig {
+  /// A custom builder for the button widget.
+  /// Provides the BuildContext, an `onPressed` callback, and the `PageType`
+  /// of the page the button is on.
+  /// If null, the default button will be used.
+  final Widget Function(
+          BuildContext context, VoidCallback onPressed, PageType pageType)?
+      customButtonBuilder;
+
+  /// Background color for the default button.
+  final Color backgroundColor;
+
+  /// Icon color for the default button.
+  final Color iconColor;
+
+  /// Size (width and height) for the default circular button.
+  final double buttonSize;
+
+  /// Size for the icon within the default button.
+  final double iconSize;
+
+  /// Offset from the edge of the screen for the default button.
+  final double edgeOffset;
+
+  const ReturnButtonConfig({
+    this.customButtonBuilder,
+    this.backgroundColor = const Color(0x66000000), // Black with 40% opacity
+    this.iconColor = Colors.white,
+    this.buttonSize = 48.0,
+    this.iconSize = 30.0,
+    this.edgeOffset = 6.0,
+  });
+}
+
 /// A custom navigator widget that allows swiping between a center page
 /// and four surrounding pages (left, right, top, bottom).
 class FivePageNavigator extends StatefulWidget {
@@ -101,8 +136,7 @@ class FivePageNavigator extends StatefulWidget {
   final Widget rightPage;
   final Widget topPage;
   final Widget bottomPage;
-  final Duration animationDuration;
-  final Duration initialWaitDuration;
+  // REMOVED: animationDuration is now fixed internally.
   final double swipeThreshold; // Threshold to trigger navigation
   final double zoomOutScale;
   final Function(PageType)? onPageChanged;
@@ -112,7 +146,6 @@ class FivePageNavigator extends StatefulWidget {
   final bool enableRightPageSwipeBack;
   final bool enableTopPageSwipeBack;
   final bool enableBottomPageSwipeBack;
-  final double initialViewScale;
   final bool Function()? canSwipeFromCenter;
   final ThresholdFeedback thresholdFeedback;
   final VoidCallback? onReturnCenterPage;
@@ -122,6 +155,15 @@ class FivePageNavigator extends StatefulWidget {
   final VoidCallback? onBottomPageOpened;
   final bool showSidePagePreviews;
   final PagePreviewConfig? previewConfig;
+  final double incomingPageOpacityStart;
+
+  // NEW FEATURES: Initial Center Page Entrance Animation
+  final bool animateCenterPageEntranceOpacity;
+  final Duration centerPageEntranceAnimationDuration;
+
+  // NEW FEATURES: Return Button Configuration
+  final bool showReturnToCenterButton;
+  final ReturnButtonConfig? returnButtonConfig;
 
   const FivePageNavigator({
     super.key,
@@ -130,8 +172,7 @@ class FivePageNavigator extends StatefulWidget {
     required this.rightPage,
     required this.topPage,
     required this.bottomPage,
-    this.animationDuration = const Duration(milliseconds: 300),
-    this.initialWaitDuration = Duration.zero,
+    // this.animationDuration = const Duration(milliseconds: 300), // REMOVED
     this.swipeThreshold = 0.25,
     this.zoomOutScale = 1,
     this.onPageChanged,
@@ -141,7 +182,6 @@ class FivePageNavigator extends StatefulWidget {
     this.enableRightPageSwipeBack = false,
     this.enableTopPageSwipeBack = false,
     this.enableBottomPageSwipeBack = false,
-    this.initialViewScale = 1.0,
     this.canSwipeFromCenter,
     this.thresholdFeedback = ThresholdFeedback.heavyImpact,
     this.onReturnCenterPage,
@@ -151,7 +191,18 @@ class FivePageNavigator extends StatefulWidget {
     this.onBottomPageOpened,
     this.showSidePagePreviews = false,
     this.previewConfig,
-  });
+    this.incomingPageOpacityStart = 0.1,
+    // New properties for initial center page animation
+    this.animateCenterPageEntranceOpacity = false,
+    this.centerPageEntranceAnimationDuration = kThemeAnimationDuration,
+    // New properties for return button
+    this.showReturnToCenterButton = true,
+    this.returnButtonConfig,
+  }) : assert(
+          !(animateCenterPageEntranceOpacity == false &&
+              centerPageEntranceAnimationDuration != kThemeAnimationDuration),
+          'centerPageEntranceAnimationDuration only applies when animateCenterPageEntranceOpacity is true.',
+        );
 
   @override
   State<FivePageNavigator> createState() => _FivePageNavigatorState();
@@ -160,44 +211,54 @@ class FivePageNavigator extends StatefulWidget {
 class _FivePageNavigatorState extends State<FivePageNavigator>
     with TickerProviderStateMixin {
   bool _hasTriggerHapticFeedback = false;
-  late AnimationController _initialZoomController;
+
   late AnimationController _swipeTransitionController;
   // Shake effect is calculated directly in build, no separate controller needed
   double _swipeProgress = 0.0;
   SwipeDirection? _currentSwipeDirection;
   Offset? _dragStartPosition;
-  bool _isInitialZoomCompleted = false;
   bool _isReturningToCenter = false;
   PageType? _returningFromPageType;
   late PagePreviewConfig _effectivePreviewConfig;
+
+  // Animation controllers and animations for center page entrance opacity
+  AnimationController? _centerPageEntranceController;
+  Animation<double>? _centerPageEntranceOpacityAnimation;
+
+  // Fixed animation duration for swipe transitions
+  static const Duration _fixedSwipeAnimationDuration =
+      Duration(milliseconds: 300);
 
   @override
   void initState() {
     super.initState();
     _effectivePreviewConfig = widget.previewConfig ?? const PagePreviewConfig();
-    _initialZoomController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
+
     _swipeTransitionController = AnimationController(
-      duration: widget.animationDuration,
+      duration: _fixedSwipeAnimationDuration, // Fixed duration
       vsync: this,
     );
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(widget.initialWaitDuration, () {
+    // Initialize entrance animation if enabled
+    if (widget.animateCenterPageEntranceOpacity) {
+      _centerPageEntranceController = AnimationController(
+        duration: widget.centerPageEntranceAnimationDuration,
+        vsync: this,
+      );
+      _centerPageEntranceOpacityAnimation =
+          Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(
+          parent: _centerPageEntranceController!,
+          curve: Curves.easeIn,
+        ),
+      );
+      // Start animation immediately after the first frame to ensure it runs once on build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _initialZoomController.forward().then((_) {
-            if (mounted) {
-              setState(() {
-                _isInitialZoomCompleted = true;
-              });
-              widget.onPageChanged?.call(PageType.center);
-            }
-          });
+          _centerPageEntranceController?.forward();
         }
       });
-    });
+    }
   }
 
   @override
@@ -207,15 +268,12 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
       _effectivePreviewConfig =
           widget.previewConfig ?? const PagePreviewConfig();
     }
-    if (widget.animationDuration != oldWidget.animationDuration) {
-      _swipeTransitionController.duration = widget.animationDuration;
-    }
   }
 
   @override
   void dispose() {
-    _initialZoomController.dispose();
     _swipeTransitionController.dispose();
+    _centerPageEntranceController?.dispose(); // Dispose if initialized
     super.dispose();
   }
 
@@ -226,14 +284,23 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
         .add(DiagnosticsProperty<Widget>('centerPage', widget.centerPage));
     properties.add(DiagnosticsProperty<bool>(
         'showSidePagePreviews', widget.showSidePagePreviews));
+    properties.add(DiagnosticsProperty<bool>('animateCenterPageEntranceOpacity',
+        widget.animateCenterPageEntranceOpacity));
+    if (widget.animateCenterPageEntranceOpacity) {
+      properties.add(DiagnosticsProperty<Duration>(
+          'centerPageEntranceAnimationDuration',
+          widget.centerPageEntranceAnimationDuration));
+    }
+    properties.add(DiagnosticsProperty<bool>(
+        'showReturnToCenterButton', widget.showReturnToCenterButton));
+    properties.add(DiagnosticsProperty<ReturnButtonConfig?>(
+        'returnButtonConfig', widget.returnButtonConfig));
   }
 
   // --- Gesture Handling ---
 
   void _handlePanStart(DragStartDetails details) {
-    if (!_isInitialZoomCompleted ||
-        _swipeTransitionController.isAnimating ||
-        _isReturningToCenter) {
+    if (_swipeTransitionController.isAnimating || _isReturningToCenter) {
       _dragStartPosition = null;
       return;
     }
@@ -424,7 +491,9 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
   void _handleReturnFromPage(PageType returnedFrom) {
     if (!mounted ||
         _swipeTransitionController.isAnimating ||
-        _isReturningToCenter) return;
+        _isReturningToCenter) {
+      return;
+    }
     final reverseDirection = _getReverseSwipeDirection(returnedFrom);
     if (reverseDirection == null) {
       _resetReturnState();
@@ -440,7 +509,7 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
     widget.onPageChanged?.call(PageType.center);
     _swipeTransitionController.reverse(from: 1.0).then((_) {
       if (mounted) {
-        _resetReturnState();
+        _resetReturnState(); // Reset state after the animation completes
         widget.onReturnCenterPage?.call();
       }
     }).catchError((error) {
@@ -484,31 +553,58 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
         break;
     }
 
-    // --- KeyedSubtree KALDIRILDI ---
-    // final pageKey = ValueKey('SidePage_${targetPageType.toString()}'); // Key kullanımını kaldırdık
-
     Navigator.push(
         context,
         PageRouteBuilder(
           opaque: false,
           pageBuilder: (ctx, anim, secAnim) => PageWrapper(
-            // key: pageKey, // Anahtarı PageWrapper'a vermiyoruz
-            pageType: targetPageType, onReturnFromPage: _handleReturnFromPage,
+            pageType: targetPageType,
+            onReturnFromPage: _handleReturnFromPage,
             enableSwipeBack: enableSwipeBackForTarget,
             centerPage: widget.centerPage,
             thresholdFeedback: widget.thresholdFeedback,
+            // Pass return button config AND incomingPageOpacityStart
+            showReturnToCenterButton: widget.showReturnToCenterButton,
+            returnButtonConfig: widget.returnButtonConfig,
+            incomingPageOpacityStart: widget.incomingPageOpacityStart,
             child: targetPageWidget,
           ),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
         )).then((result) {
-      if (result == "gesture_pop") {
-        _resetReturnState(); // Resets controller value to 0
-        widget.onReturnCenterPage?.call();
+      if (!mounted) return; // Ensure widget is still mounted after async op
+
+      if (result is Map && result["type"] == "gesture_pop_completed") {
+        // This was a gesture pop from PageWrapper, and PageWrapper completed its animation.
+        // FivePageNavigator just needs to reset its state to idle, no animation needed.
+        _resetReturnState(); // This sets _isReturningToCenter to false, _swipeProgress to 0
+        widget.onReturnCenterPage
+            ?.call(); // Notify listener that we're back at center
+      } else if (result is String && result.startsWith("button_pop")) {
+        // This was a button pop from PageWrapper.
+        // _handleReturnFromPage was ALREADY called by the button's onTap directly
+        // before the pop, and it handles the animation and state reset.
+        // So, do nothing here to avoid redundant calls/resets.
+      } else {
+        // This covers system back button pops (result is null) or any other unhandled pops.
+        // In these cases, PageWrapper's PopScope's onPopInvokedWithResult should
+        // ideally have called _handleReturnFromPage to trigger animation.
+        // If _isReturningToCenter is true, it means _handleReturnFromPage was already called
+        // and is running its animation, so let it complete its own reset.
+        // If _isReturningToCenter is false, it means an unexpected pop occurred
+        // without _handleReturnFromPage being invoked, so we need a fallback reset.
+        if (!_isReturningToCenter) {
+          _resetReturnState();
+          widget.onReturnCenterPage?.call();
+        }
       }
     });
 
-    _resetDragState(keepControllerValue: true);
+    // CRITICAL FIX: Reset FivePageNavigator's swipe animation state to idle AFTER pushing the page.
+    // This ensures FivePageNavigator isn't stuck rendering a "partially swiped" state
+    // when a child route (PageWrapper) is now on top. This will make _buildSwipeContent
+    // render the idle center page in the background, which PageWrapper then uses.
+    _resetDragState(keepControllerValue: false);
 
     widget.onPageChanged?.call(targetPageType);
     switch (targetPageType) {
@@ -671,16 +767,32 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
     }
   }
 
+  // Helper to get the center page wrapped with its entrance opacity animation
+  Widget _getAnimatedCenterPage() {
+    if (!widget.animateCenterPageEntranceOpacity ||
+        _centerPageEntranceController == null) {
+      // If animation is not enabled or controller not initialized, return the raw widget.
+      return widget.centerPage;
+    }
+
+    // Wrap the center page in an AnimatedBuilder to handle its initial opacity fade-in.
+    // This AnimatedBuilder ensures the widget rebuilds when _centerPageEntranceOpacityAnimation changes.
+    return AnimatedBuilder(
+      animation: _centerPageEntranceOpacityAnimation!,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _centerPageEntranceOpacityAnimation!.value,
+          child: child,
+        );
+      },
+      child: widget.centerPage,
+    );
+  }
+
   // --- Build Methods ---
 
   @override
   Widget build(BuildContext context) {
-    if (!_isInitialZoomCompleted) {
-      return AnimatedBuilder(
-          animation: _initialZoomController,
-          builder: (context, child) =>
-              _buildInitialZoomContent(_initialZoomController.value));
-    }
     // Listen only to swipe controller; shake effect is calculated directly in build
     return ListenableBuilder(
         listenable: _swipeTransitionController,
@@ -699,159 +811,6 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
             ),
           );
         });
-  }
-
-  /// Builds the content displayed during the initial zoom-out animation.
-  /// FIX: Refined center page scaling and positioning logic for smoothness.
-  Widget _buildInitialZoomContent(double animationProgress) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final screenHeight = MediaQuery.sizeOf(context).height;
-    const double spacing = 15.0; // Consistent spacing
-
-    // Calculate scales based on animation progress
-    // Side pages scale down to 0
-    final sideScale =
-        lerpDouble(widget.initialViewScale, 0.0, animationProgress)!
-            .clamp(0.0, 1.0);
-    // Center page scales from initialViewScale up to 1.0
-    final centerCurrentScale =
-        lerpDouble(widget.initialViewScale, 1.0, animationProgress)!;
-
-    // --- Calculate Initial Positions/Sizes (animationProgress = 0) ---
-    final initialCenterWidth = screenWidth * widget.initialViewScale;
-    final initialCenterHeight = screenHeight * widget.initialViewScale;
-    final initialCenterX = (screenWidth - initialCenterWidth) / 2;
-    final initialCenterY = (screenHeight - initialCenterHeight) / 2;
-
-    final initialSideWidth = screenWidth * widget.initialViewScale;
-    final initialSideHeight = screenHeight * widget.initialViewScale;
-
-    // Calculate positions relative to the initial center position
-    final initialLeftX = initialCenterX - initialSideWidth - spacing;
-    final initialRightX = initialCenterX + initialCenterWidth + spacing;
-    final initialTopY = initialCenterY - initialSideHeight - spacing;
-    final initialBottomY = initialCenterY + initialCenterHeight + spacing;
-    final initialSideY = initialCenterY; // Y for left/right pages initially
-    final initialSideX = initialCenterX; // X for top/bottom pages initially
-
-    // --- Calculate Final Positions/Sizes (animationProgress = 1) ---
-    const finalCenterX = 0.0;
-    const finalCenterY = 0.0;
-
-    // Final positions ensure side pages are completely off-screen
-    final finalLeftX = -screenWidth;
-    final finalRightX = screenWidth;
-    final finalTopY = -screenHeight;
-    final finalBottomY = screenHeight;
-
-    // Final alignment helper positions (less critical as scale is 0)
-    final finalSideY = (screenHeight - initialSideHeight) / 2;
-    final finalSideX = (screenWidth - initialSideWidth) / 2;
-
-    // --- Interpolate Current Positions ---
-    final currentCenterX =
-        lerpDouble(initialCenterX, finalCenterX, animationProgress)!;
-    final currentCenterY =
-        lerpDouble(initialCenterY, finalCenterY, animationProgress)!;
-    final currentLeftX =
-        lerpDouble(initialLeftX, finalLeftX, animationProgress)!;
-    final currentRightX =
-        lerpDouble(initialRightX, finalRightX, animationProgress)!;
-    final currentTopY = lerpDouble(initialTopY, finalTopY, animationProgress)!;
-    final currentBottomY =
-        lerpDouble(initialBottomY, finalBottomY, animationProgress)!;
-    final currentSideY =
-        lerpDouble(initialSideY, finalSideY, animationProgress)!;
-    final currentSideX =
-        lerpDouble(initialSideX, finalSideX, animationProgress)!;
-
-    // Animate the display size of the center page's container
-    final currentCenterDisplayWidth =
-        lerpDouble(initialCenterWidth, screenWidth, animationProgress)!;
-    final currentCenterDisplayHeight =
-        lerpDouble(initialCenterHeight, screenHeight, animationProgress)!;
-
-    // --- Build the Stack ---
-    List<Widget> stackChildren = [];
-
-    // Add side pages only if they are significantly visible
-    if (sideScale > 0.01) {
-      // Reduced threshold slightly
-      stackChildren.addAll([
-        // Use initial sizes for Positioned, let Transform.scale handle the size change
-        Positioned(
-          left: currentLeftX,
-          top: currentSideY,
-          width: initialSideWidth,
-          height: initialSideHeight,
-          child: Transform.scale(
-            scale: sideScale,
-            alignment: Alignment.center,
-            child: widget.leftPage,
-          ),
-        ),
-        Positioned(
-          left: currentRightX,
-          top: currentSideY,
-          width: initialSideWidth,
-          height: initialSideHeight,
-          child: Transform.scale(
-            scale: sideScale,
-            alignment: Alignment.center,
-            child: widget.rightPage,
-          ),
-        ),
-        Positioned(
-          left: currentSideX,
-          top: currentTopY,
-          width: initialSideWidth,
-          height: initialSideHeight,
-          child: Transform.scale(
-            scale: sideScale,
-            alignment: Alignment.center,
-            child: widget.topPage,
-          ),
-        ),
-        Positioned(
-          left: currentSideX,
-          top: currentBottomY,
-          width: initialSideWidth,
-          height: initialSideHeight,
-          child: Transform.scale(
-            scale: sideScale,
-            alignment: Alignment.center,
-            child: widget.bottomPage,
-          ),
-        ),
-      ]);
-    }
-
-    // Add the center page
-    stackChildren.add(
-      Positioned(
-        left: currentCenterX,
-        top: currentCenterY,
-        width: currentCenterDisplayWidth, // Animate container size
-        height: currentCenterDisplayHeight,
-        // The Positioned widget handles the overall placement and size animation.
-        // The Transform.scale inside scales the *content* to match the desired scale smoothly.
-        child: Transform.scale(
-          // Scale factor goes from initialViewScale to 1.0
-          scale: centerCurrentScale,
-          alignment: Alignment.center,
-          // Provide a SizedBox sized to the *final* screen dimensions.
-          // The Transform.scale above will handle scaling this down/up correctly
-          // within the animated Positioned bounds. No ClipRect needed here.
-          child: SizedBox(
-              width: screenWidth,
-              height: screenHeight,
-              child: widget.centerPage),
-        ),
-      ),
-    );
-
-    // Always return a Stack
-    return Stack(children: stackChildren);
   }
 
   /// Builds the preview widget that animates based on swipe progress.
@@ -1019,67 +978,76 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
 
   /// Builds the content displayed during swipe (drag) and swipe transitions
   Widget _buildSwipeContent(double animationProgress) {
-    // Idle state: Show only center page
-    if (_currentSwipeDirection == null &&
-        !_isReturningToCenter &&
-        !_swipeTransitionController.isAnimating &&
-        animationProgress == 0.0) {
-      return widget.centerPage;
-    }
-
     final size = MediaQuery.sizeOf(context);
     List<Widget> stackChildren = [];
-    Widget centerPageForStack = widget.centerPage; // Base layer
+
+    // This is the version of the center page that includes the initial fade-in animation,
+    // if enabled. It will be opaque (1.0) once the animation completes.
+    // We'll use this `animatedCenterPage` whenever the center page is static or a background.
+    final Widget animatedCenterPage = _getAnimatedCenterPage();
 
     if (_isReturningToCenter) {
-      // --- Returning to Center ---
-      // Standard slide animation, no previews involved here.
+      // Case 1: Returning to Center (center page is animating in, driven by FivePageNavigator)
+      // This happens for button clicks or system back if PageWrapper didn't handle animation.
       Widget pageComingOnScreen = widget.centerPage;
       Widget pageGoingOffScreen = _getPageWidgetByType(_returningFromPageType!);
       SwipeDirection effectiveDirection = _currentSwipeDirection!;
-      double currentScaleForOnScreen = 1.0, currentScaleForOffScreen = 1.0;
-      if (widget.zoomOutScale != 1.0) {
-        currentScaleForOnScreen =
-            lerpDouble(widget.zoomOutScale, 1.0, 1.0 - animationProgress)!;
-        currentScaleForOffScreen =
-            lerpDouble(1.0, widget.zoomOutScale, 1.0 - animationProgress)!;
-      }
+      double currentScale =
+          lerpDouble(widget.zoomOutScale, 1.0, 1.0 - animationProgress)!;
       final centerPushedOffset =
           _getCenterPageEndOffset(effectiveDirection, size);
-      final offsetForOnScreen = Offset.lerp(
-          centerPushedOffset, Offset.zero, 1.0 - animationProgress)!;
+      final incomingPageProgress = 1.0 - animationProgress;
+      final offsetForOnScreen =
+          Offset.lerp(centerPushedOffset, Offset.zero, incomingPageProgress)!;
       final sideOffScreenOffset = _getOffScreenOffset(effectiveDirection, size);
-      final offsetForOffScreen = Offset.lerp(
-          Offset.zero, sideOffScreenOffset, 1.0 - animationProgress)!;
-      stackChildren.add(Transform.translate(
-          offset: offsetForOffScreen,
-          child: Transform.scale(
-              scale: currentScaleForOffScreen,
-              alignment: Alignment.center,
-              child: pageGoingOffScreen)));
-      stackChildren.add(Transform.translate(
+      final offsetForOffScreen =
+          Offset.lerp(Offset.zero, sideOffScreenOffset, incomingPageProgress)!;
+
+      stackChildren.add(
+        Transform.translate(
           offset: offsetForOnScreen,
           child: Transform.scale(
-              scale: currentScaleForOnScreen,
-              alignment: Alignment.center,
-              child: pageComingOnScreen)));
+            scale: currentScale,
+            alignment: Alignment.center,
+            child: Opacity(
+              opacity: lerpDouble(
+                  widget.incomingPageOpacityStart, 1.0, incomingPageProgress)!,
+              child:
+                  pageComingOnScreen, // Raw center page, opacity handled by lerp here
+            ),
+          ),
+        ),
+      );
+      stackChildren.add(
+        Transform.translate(
+          offset: offsetForOffScreen,
+          child: Transform.scale(
+            scale: currentScale,
+            alignment: Alignment.center,
+            child: pageGoingOffScreen,
+          ),
+        ),
+      );
     } else if (_currentSwipeDirection != null) {
-      // --- Swiping from Center ---
+      // Case 2: Swiping from Center (either showing preview or final slide, driven by FivePageNavigator)
       SwipeDirection effectiveDirection = _currentSwipeDirection!;
       bool isAnimatingToPageCompletion =
           _swipeTransitionController.isAnimating &&
               (_swipeTransitionController.status == AnimationStatus.forward);
 
-      // If showing previews AND not in the final slide animation, show center + preview.
       if (widget.showSidePagePreviews && !isAnimatingToPageCompletion) {
-        stackChildren
-            .add(centerPageForStack); // Center page is static background
+        // Sub-case 2a: Swiping with previews active: center page is background.
+        // Use the `animatedCenterPage` here so it gets its initial fade-in effect.
+        stackChildren.add(animatedCenterPage);
         if (animationProgress > 0) {
+          // Only show preview if there's actual swipe progress
           stackChildren
               .add(_buildPreviewOverlay(animationProgress, effectiveDirection));
         }
       } else {
-        // --- Standard Slide (or Final Slide after preview) ---
+        // Sub-case 2b: Final slide animation (no preview shown, center page slides out, side page slides in)
+        // The center page is *moving out*, its opacity is 1.0 (it's the active page).
+        // So, use the raw `widget.centerPage` here.
         Widget pageGoingOffScreen = widget.centerPage;
         double currentScaleForOffScreen = 1.0;
         if (widget.zoomOutScale != 1.0) {
@@ -1091,16 +1059,15 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
         final offsetForOffScreen =
             Offset.lerp(Offset.zero, centerEndOffset, animationProgress)!;
 
-        // Render the outgoing page (center) transforming
         stackChildren.add(Transform.translate(
-            offset: offsetForOffScreen,
-            child: Transform.scale(
-                scale: currentScaleForOffScreen,
-                alignment: Alignment.center,
-                child: pageGoingOffScreen)));
+          offset: offsetForOffScreen,
+          child: Transform.scale(
+            scale: currentScaleForOffScreen,
+            alignment: Alignment.center,
+            child: pageGoingOffScreen,
+          ),
+        ));
 
-        // **Render the incoming page for the slide effect**
-        // This fixes the black screen issue.
         PageType? targetPageType =
             _getPageTypeFromSwipeDirection(effectiveDirection);
         if (targetPageType != null) {
@@ -1113,17 +1080,29 @@ class _FivePageNavigatorState extends State<FivePageNavigator>
           final sideStartOffset = _getOffScreenOffset(effectiveDirection, size);
           final offsetForOnScreen =
               Offset.lerp(sideStartOffset, Offset.zero, animationProgress)!;
-          stackChildren.add(Transform.translate(
+          stackChildren.add(
+            Transform.translate(
               offset: offsetForOnScreen,
               child: Transform.scale(
-                  scale: currentScaleForOnScreen,
-                  alignment: Alignment.center,
-                  child: pageComingOnScreen)));
+                scale: currentScaleForOnScreen,
+                alignment: Alignment.center,
+                child: Opacity(
+                  opacity: lerpDouble(
+                      widget.incomingPageOpacityStart, 1.0, animationProgress)!,
+                  child: pageComingOnScreen,
+                ),
+              ),
+            ),
+          );
         }
       }
     } else {
-      stackChildren.add(centerPageForStack);
+      // Case 3: Idle state: Only center page is visible.
+      // This is also the state when a PageWrapper is pushed on top and FivePageNavigator is behind it.
+      // Use the `animatedCenterPage` here so it gets its initial fade-in effect.
+      stackChildren.add(animatedCenterPage);
     }
+
     return Stack(children: stackChildren);
   }
 } // End of _FivePageNavigatorState
@@ -1139,6 +1118,11 @@ class PageWrapper extends StatefulWidget {
       centerPage; // Needed for the swipe-back animation to reveal center
   final ThresholdFeedback thresholdFeedback;
 
+  // NEW: Return Button Configuration
+  final bool showReturnToCenterButton;
+  final ReturnButtonConfig? returnButtonConfig;
+  final double incomingPageOpacityStart; // NEW: Pass down this value
+
   const PageWrapper({
     super.key, // Allow key to be passed
     required this.child,
@@ -1147,6 +1131,10 @@ class PageWrapper extends StatefulWidget {
     this.enableSwipeBack = false,
     required this.centerPage,
     this.thresholdFeedback = ThresholdFeedback.heavyImpact,
+    // NEW properties
+    this.showReturnToCenterButton = true,
+    this.returnButtonConfig,
+    this.incomingPageOpacityStart = 0.1, // NEW: Receive this value
   });
 
   @override
@@ -1157,13 +1145,12 @@ class _PageWrapperState extends State<PageWrapper>
     with TickerProviderStateMixin {
   late AnimationController _swipeBackController;
   double _swipeBackDragStart = 0.0;
-  bool _isSwipeBackDragging = false;
+  bool _isSwipeBackDragging = false; // Tracks if a swipe-back gesture is active
   bool _hasTriggerHapticFeedback = false;
 
   @override
   void initState() {
     super.initState();
-    // print("✅ PageWrapper initState for ${widget.pageType}"); // Debug log
     _swipeBackController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -1174,7 +1161,6 @@ class _PageWrapperState extends State<PageWrapper>
 
   @override
   void dispose() {
-    // print("❌ PageWrapper dispose for ${widget.pageType}"); // Debug log
     _swipeBackController.dispose();
     super.dispose();
   }
@@ -1213,7 +1199,14 @@ class _PageWrapperState extends State<PageWrapper>
       case PageType.center:
         break;
     }
-    _isSwipeBackDragging = isValidSwipeStart;
+
+    // Update _isSwipeBackDragging and trigger rebuild to hide the button
+    if (_isSwipeBackDragging != isValidSwipeStart) {
+      setState(() {
+        _isSwipeBackDragging = isValidSwipeStart;
+      });
+    }
+
     if (_isSwipeBackDragging) {
       _hasTriggerHapticFeedback = false;
       _swipeBackController.value = 0.0;
@@ -1265,43 +1258,166 @@ class _PageWrapperState extends State<PageWrapper>
 
   void _handlePanEnd(DragEndDetails details) {
     if (!_isSwipeBackDragging) return;
-    _isSwipeBackDragging = false;
     _hasTriggerHapticFeedback = false;
     const double swipeBackPopThreshold = 0.5;
     if (_swipeBackController.value >= swipeBackPopThreshold) {
       _swipeBackController.animateTo(1.0).then((_) {
-        if (mounted) Navigator.of(context).pop("gesture_pop");
+        if (mounted) {
+          // Pop with a map to signify gesture pop and pass pageType
+          // FivePageNavigator will just reset state, no animation needed from its side.
+          Navigator.of(context).pop(
+            {
+              "type": "gesture_pop_completed",
+              "fromPage": widget.pageType,
+            },
+          );
+        }
       }).catchError((e) {
         if (mounted) _swipeBackController.value = 0.0;
+      }).whenComplete(() {
+        // Always reset _isSwipeBackDragging and trigger rebuild when animation completes
+        if (mounted) {
+          setState(() {
+            _isSwipeBackDragging = false;
+          });
+        }
       });
     } else {
       _swipeBackController.reverse().catchError((e) {
         if (mounted) _swipeBackController.value = 0.0;
+      }).whenComplete(() {
+        // Always reset _isSwipeBackDragging and trigger rebuild when animation completes
+        if (mounted) {
+          setState(() {
+            _isSwipeBackDragging = false;
+          });
+        }
       });
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // If swipe-back is not enabled, just wrap the child with PopScope.
-    if (!widget.enableSwipeBack) {
-      return PopScope(
-        canPop: true,
-        onPopInvokedWithResult: (didPop, result) {
-          if (didPop && result != "gesture_pop") {
-            widget.onReturnFromPage?.call(widget.pageType);
-          }
-        },
-        // --- KeyedSubtree KALDIRILDI ---
-        child: widget.child,
+  /// Builds the return-to-center button for side pages.
+  Widget _buildReturnToCenterButton(BuildContext context) {
+    // If the feature is disabled, or no return callback is provided, or currently swiping back, hide the button.
+    if (!widget.showReturnToCenterButton ||
+        widget.onReturnFromPage == null ||
+        _isSwipeBackDragging) {
+      return const SizedBox.shrink();
+    }
+
+    final effectiveConfig =
+        widget.returnButtonConfig ?? const ReturnButtonConfig();
+
+    // Unified onTap logic
+    void onButtonTapped() {
+      // Trigger haptic feedback
+      if (widget.thresholdFeedback == ThresholdFeedback.lightImpact) {
+        HapticFeedback.lightImpact();
+      } else if (widget.thresholdFeedback == ThresholdFeedback.mediumImpact) {
+        HapticFeedback.mediumImpact();
+      } else if (widget.thresholdFeedback == ThresholdFeedback.heavyImpact) {
+        HapticFeedback.heavyImpact();
+      }
+      // Call the callback to notify FivePageNavigator
+      // FivePageNavigator WILL animate the return in this case.
+      widget.onReturnFromPage?.call(widget.pageType);
+      // Pop the current page from the navigator stack
+      Navigator.of(context).pop("button_pop_${widget.pageType.name}");
+    }
+
+    IconData iconData;
+    Alignment alignment;
+    double? left, right, top, bottom;
+
+    // Determine alignment and icon based on page type, regardless of custom button
+    switch (widget.pageType) {
+      case PageType.left: // Return from left page (button on right edge)
+        iconData = Icons.chevron_right;
+        alignment = Alignment.centerRight;
+        right = effectiveConfig.edgeOffset;
+        top = 0;
+        bottom = 0;
+        break;
+      case PageType.right: // Return from right page (button on left edge)
+        iconData = Icons.chevron_left;
+        alignment = Alignment.centerLeft;
+        left = effectiveConfig.edgeOffset;
+        top = 0;
+        bottom = 0;
+        break;
+      case PageType.top: // Return from top page (button on bottom edge)
+        iconData = Icons.expand_more;
+        alignment = Alignment.bottomCenter;
+        bottom = effectiveConfig.edgeOffset;
+        left = 0;
+        right = 0;
+        break;
+      case PageType.bottom: // Return from bottom page (button on top edge)
+        iconData = Icons.expand_less;
+        alignment = Alignment.topCenter;
+        top = effectiveConfig.edgeOffset;
+        left = 0;
+        right = 0;
+        break;
+      case PageType.center:
+        return const SizedBox.shrink(); // Button not needed on center page
+    }
+
+    Widget buttonWidget;
+    if (effectiveConfig.customButtonBuilder != null) {
+      // Use custom builder if provided
+      buttonWidget = effectiveConfig.customButtonBuilder!(
+          context, onButtonTapped, widget.pageType);
+    } else {
+      // Build default button
+      buttonWidget = Material(
+        color: Colors.transparent, // Background will be from Container
+        type: MaterialType.circle,
+        clipBehavior: Clip.hardEdge,
+        child: InkWell(
+          onTap: onButtonTapped,
+          customBorder: const CircleBorder(),
+          child: Container(
+            width: effectiveConfig.buttonSize,
+            height: effectiveConfig.buttonSize,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: effectiveConfig
+                  .backgroundColor, // Apply default background here
+            ),
+            child: Icon(
+              iconData,
+              color: effectiveConfig.iconColor,
+              size: effectiveConfig.iconSize,
+            ),
+          ),
+        ),
       );
     }
 
-    // If swipe-back is enabled, build the animating stack.
+    return Positioned(
+      left: left,
+      right: right,
+      top: top,
+      bottom: bottom,
+      child: SafeArea(
+        child: Align(
+          alignment: alignment,
+          child: buttonWidget,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // We always wrap with GestureDetector and AnimatedBuilder to maintain
+    // a consistent structure for swipe-back logic and also to easily add
+    // the button as an overlay.
     return GestureDetector(
-      onPanStart: _handlePanStart,
-      onPanUpdate: _handlePanUpdate,
-      onPanEnd: _handlePanEnd,
+      onPanStart: widget.enableSwipeBack ? _handlePanStart : null,
+      onPanUpdate: widget.enableSwipeBack ? _handlePanUpdate : null,
+      onPanEnd: widget.enableSwipeBack ? _handlePanEnd : null,
       behavior: HitTestBehavior.opaque,
       child: AnimatedBuilder(
         animation: _swipeBackController,
@@ -1310,49 +1426,67 @@ class _PageWrapperState extends State<PageWrapper>
           double sidePageTranslateX = 0.0, sidePageTranslateY = 0.0;
           double centerPageTranslateX = 0.0, centerPageTranslateY = 0.0;
 
-          switch (widget.pageType) {
-            case PageType.left:
-              sidePageTranslateX = -_swipeBackController.value * size.width;
-              centerPageTranslateX =
-                  size.width * (1.0 - _swipeBackController.value);
-              break;
-            case PageType.right:
-              sidePageTranslateX = _swipeBackController.value * size.width;
-              centerPageTranslateX =
-                  -size.width * (1.0 - _swipeBackController.value);
-              break;
-            case PageType.top:
-              sidePageTranslateY = -_swipeBackController.value * size.height;
-              centerPageTranslateY =
-                  size.height * (1.0 - _swipeBackController.value);
-              break;
-            case PageType.bottom:
-              sidePageTranslateY = _swipeBackController.value * size.height;
-              centerPageTranslateY =
-                  -size.height * (1.0 - _swipeBackController.value);
-              break;
-            case PageType.center:
-              break;
+          if (widget.enableSwipeBack) {
+            switch (widget.pageType) {
+              case PageType.left: // Swiping back from left page (moving right)
+                sidePageTranslateX = -_swipeBackController.value * size.width;
+                centerPageTranslateX =
+                    size.width * (1.0 - _swipeBackController.value);
+                break;
+              case PageType.right: // Swiping back from right page (moving left)
+                sidePageTranslateX = _swipeBackController.value * size.width;
+                centerPageTranslateX =
+                    -size.width * (1.0 - _swipeBackController.value);
+                break;
+              case PageType.top: // Swiping back from top page (moving down)
+                sidePageTranslateY = -_swipeBackController.value * size.height;
+                centerPageTranslateY =
+                    size.height * (1.0 - _swipeBackController.value);
+                break;
+              case PageType.bottom: // Swiping back from bottom page (moving up)
+                sidePageTranslateY = _swipeBackController.value * size.height;
+                centerPageTranslateY =
+                    -size.height * (1.0 - _swipeBackController.value);
+                break;
+              case PageType.center:
+                break;
+            }
           }
 
           return Stack(
             children: [
+              // This is the background center page shown during swipe back
+              // The opacity is handled here by PageWrapper
               Transform.translate(
                 offset: Offset(centerPageTranslateX, centerPageTranslateY),
                 child: widget.centerPage,
               ),
+              // This is the actual side page content
               Transform.translate(
                 offset: Offset(sidePageTranslateX, sidePageTranslateY),
                 child: PopScope(
-                  canPop: _swipeBackController.value < 0.1,
+                  // System back button can pop if not actively swiping back or if drag is minimal
+                  canPop: widget.enableSwipeBack
+                      ? (_swipeBackController.value < 0.1 &&
+                          !_isSwipeBackDragging)
+                      : true,
                   onPopInvokedWithResult: (didPop, result) {
-                    if (didPop && result != "gesture_pop") {
+                    // Only call onReturnFromPage if it was a system back button pop
+                    // and not one of our gesture_pop_completed or button_pop.
+                    // This ensures the animation from FivePageNavigator's side.
+                    if (didPop &&
+                        !(result is Map &&
+                            result["type"] == "gesture_pop_completed") &&
+                        !(result is String &&
+                            result.startsWith("button_pop"))) {
                       widget.onReturnFromPage?.call(widget.pageType);
                     }
                   },
-                  child: widget.child,
+                  child: widget.child, // The actual side page content
                 ),
               ),
+              // Add the return button on top of everything
+              _buildReturnToCenterButton(context),
             ],
           );
         },

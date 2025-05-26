@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+* Initial zoom animation replaced with FadeIn animation.
+* Add optional return button to the side pages.
+* Implement opacity variable while navigating side pages.
+
 ## 1.0.12
 
 * Implement threshold feedback variable.
