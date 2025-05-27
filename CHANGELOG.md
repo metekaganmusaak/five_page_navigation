@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.0
+
+* Refactor and bug fixes.
+* Remove setState's and replace it with ValueNotifier's to improve smoothness.
+* Add page preview feature: Swipe from the edges to see tiny tooltip before navigating the side pages.
+* Change folder structure and separate the files.
+* Add FivePageController to handle navigations.
+* Change some namings to be more clear.
+* Implemented FadeIn animations while sliding between pages.
+
+## 1.1.0
+
+* Initial zoom animation replaced with FadeIn animation.
+* Add optional return button to the side pages.
+* Implement opacity variable while navigating side pages.
+
 ## 1.0.12
 
 * Implement threshold feedback variable.
