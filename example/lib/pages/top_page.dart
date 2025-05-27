@@ -10,11 +10,19 @@ class TopPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Top Page'),
       ),
-      body: Center(
-        child: Text(
-          'This is the top page',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
+      body: ListView.builder(
+        itemCount: 100,
+        itemBuilder: (BuildContext context, int index) {
+          return ListTile(
+            title: Text('Item $index'),
+            onTap: () {
+              // Handle item tap
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Tapped on Item $index')),
+              );
+            },
+          );
+        },
       ),
     );
   }

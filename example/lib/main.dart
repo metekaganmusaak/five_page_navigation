@@ -28,12 +28,32 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class BasePage extends StatelessWidget {
+class BasePage extends StatefulWidget {
   const BasePage({super.key});
+
+  @override
+  State<BasePage> createState() => _BasePageState();
+}
+
+class _BasePageState extends State<BasePage> {
+  late final FivePageController fivePageController;
+
+  @override
+  initState() {
+    super.initState();
+    fivePageController = FivePageController();
+  }
+
+  @override
+  void dispose() {
+    fivePageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return FivePageNavigator(
+      controller: fivePageController,
       centerPage: CenterPage(),
       leftPage: LeftPage(),
       rightPage: RightPage(),
@@ -44,38 +64,97 @@ class BasePage extends StatelessWidget {
       enableRightPageSwipeBack: true,
       enableTopPageSwipeBack: true,
       swipeThreshold: .2,
-      thresholdFeedback: ThresholdFeedback.heavyImpact,
+      thresholdFeedback: ThresholdVibration.heavy,
       animateCenterPageEntranceOpacity: true,
-      zoomOutScale: 1,
 
-      verticalDetectionAreaHeight: 200,
-      horizontalDetectionAreaWidth: 100,
+      verticalDetectionAreaHeight: MediaQuery.sizeOf(context).height * .2,
+      horizontalDetectionAreaWidth: MediaQuery.sizeOf(context).width * .2,
 
-      incomingPageOpacityStart: .2,
+      incomingPageOpacityStart: 0.3,
       centerPageEntranceAnimationDuration: Duration(seconds: 1),
 
       /// You can control swiping feature of the CenterPage. Default, enabled.
       canSwipeFromCenter: () {
         return true;
       },
-      onBottomPageOpened: () {
-        print('bottom page opened');
+      onBottomPageOpened: () async {
+        // print('bottom page opened');
+        // await Future.delayed(Duration(seconds: 1));
+        // fivePageController.returnToCenter();
       },
-      onLeftPageOpened: () {
-        print('left page opened');
+      onLeftPageOpened: () async {
+        // print('left page opened');
+        // await Future.delayed(Duration(seconds: 1));
+        // fivePageController.returnToCenter();
       },
-      onRightPageOpened: () {
-        print('right page opened');
+      onRightPageOpened: () async {
+        // print('right page opened');
+        // await Future.delayed(Duration(seconds: 1));
+        // fivePageController.returnToCenter();
       },
       onTopPageOpened: () async {
-        print('top page opened');
+        // print('on top page opened');
+        // await Future.delayed(Duration(seconds: 1));
+        // fivePageController.returnToCenter();
       },
-      onReturnCenterPage: () {
-        print('return center page');
+      onReturnCenterPage: () async {
+        // print('return center page');
+        // await Future.delayed(Duration(seconds: 1));
+        // fivePageController.returnToCenter();
       },
       onPageChanged: (p0) {
         print('page changed: $p0');
       },
+      pagePreviewStyle: PagePreviewStyle(
+        leftPagePreviewWidget: Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            height: 160,
+            width: 90,
+            child: Column(
+              mainAxisSize: MainAxisSize.max,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Expanded(child: LeftPage()),
+              ],
+            ),
+          ),
+        ),
+        leftPageLabel: "Left",
+        rightPageLabel: "Right",
+        topPageLabel: "Top",
+        bottomPageLabel: "Bottom",
+        defaultChipBackgroundColor: Colors.black54,
+        defaultChipTextColor: Colors.white,
+        defaultChipPadding:
+            EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        defaultChipBorderRadius: BorderRadius.all(Radius.circular(20.0)),
+      ),
+
+      showReturnToCenterButton: true,
+      returnButtonStyle: ReturnButtonStyle(
+        customButtonBuilder: (context, onPressed, pageType) {
+          if (pageType == PageType.top) {
+            return IconButton.filledTonal(
+              color: Colors.black54,
+              icon: Icon(Icons.arrow_downward, size: 32),
+              onPressed: onPressed,
+            );
+          }
+
+          if (pageType == PageType.bottom) {
+            return IconButton.filledTonal(
+              color: Colors.black54,
+              icon: Icon(Icons.arrow_upward, size: 32),
+              onPressed: onPressed,
+            );
+          }
+
+          return SizedBox.shrink();
+        },
+      ),
+      showSidePagePreviews: true,
     );
   }
 }
