@@ -5,6 +5,6 @@
 /// and enums.
 library;
 
-export 'src/five_page_navigator.dart';
-export 'src/enums/exports.dart';
 export 'src/configs/exports.dart';
+export 'src/enums/exports.dart';
+export 'src/five_page_navigator.dart';
