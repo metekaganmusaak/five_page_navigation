@@ -115,10 +115,10 @@ class _PageWrapperState extends State<PageWrapper>
     // Set up a post-frame callback to calculate edge detection area dimensions
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final size = MediaQuery.sizeOf(context);
-      // 20% of screen width
-      _horizontalEdgeDetectionAreaWidth = size.width * 0.2;
-      // 20% of screen height
-      _verticalEdgeDetectionAreaHeight = size.height * 0.2;
+      // 40% of screen width
+      _horizontalEdgeDetectionAreaWidth = size.width * 0.4;
+      // 40% of screen height
+      _verticalEdgeDetectionAreaHeight = size.height * 0.4;
     });
   }
 
