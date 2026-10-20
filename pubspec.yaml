@@ -1,12 +1,22 @@
 name: five_page_navigation
-description: "This package allows you to navigate between screen from one central page. You can swipe up, down, left and right with ease."
-version: 2.0.1
-homepage: https://github.com/metekaganmusaak/five_page_navigation
+description: >-
+  Snapchat-style navigation between a center page and four side pages with
+  edge swipes, 14 built-in transitions, previews, haptics and a controller.
+version: 3.0.0
+repository: https://github.com/metekaganmusaak/five_page_navigation
 issue_tracker: https://github.com/metekaganmusaak/five_page_navigation/issues
+documentation: https://github.com/metekaganmusaak/five_page_navigation#readme
+
+topics:
+  - navigation
+  - gestures
+  - animation
+  - transitions
+  - swipe
 
 environment:
-  sdk: ^3.6.1
-  flutter: ">=1.17.0"
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
 
 dependencies:
   flutter:
@@ -17,8 +27,6 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
 
-flutter:
-
 screenshots:
-  - description: "Package Logo"
+  - description: Five Page Navigation logo
     path: assets/logo.png

@@ -1,160 +1,97 @@
-import 'package:example/pages/bottom_page.dart';
-import 'package:example/pages/center_page.dart';
-import 'package:example/pages/left_page.dart';
-import 'package:example/pages/right_page.dart';
-import 'package:example/pages/top_page.dart';
 import 'package:five_page_navigation/five_page_navigation.dart';
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+import 'demo_settings.dart';
+import 'pages/discover_page.dart';
+import 'pages/home_page.dart';
+import 'pages/messages_page.dart';
+import 'pages/notifications_page.dart';
+import 'pages/profile_page.dart';
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+void main() => runApp(const FivePageExampleApp());
 
-  // This widget is the root of your application.
+class FivePageExampleApp extends StatelessWidget {
+  const FivePageExampleApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Five Page Navigation',
       debugShowCheckedModeBanner: false,
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
+      theme: ThemeData(colorSchemeSeed: Colors.indigo),
+      darkTheme: ThemeData(
+        colorSchemeSeed: Colors.indigo,
+        brightness: Brightness.dark,
       ),
-      home: BasePage(),
+      home: const ShowcasePage(),
     );
   }
 }
 
-class BasePage extends StatefulWidget {
-  const BasePage({super.key});
+class ShowcasePage extends StatefulWidget {
+  const ShowcasePage({super.key});
 
   @override
-  State<BasePage> createState() => _BasePageState();
+  State<ShowcasePage> createState() => _ShowcasePageState();
 }
 
-class _BasePageState extends State<BasePage> {
-  late final FivePageController fivePageController;
-
-  @override
-  initState() {
-    super.initState();
-    fivePageController = FivePageController();
-  }
+class _ShowcasePageState extends State<ShowcasePage> {
+  final FivePageController _controller = FivePageController();
+  DemoSettings _settings = const DemoSettings();
 
   @override
   void dispose() {
-    fivePageController.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final swipeBack = _settings.swipeBack;
     return FivePageNavigator(
-      controller: fivePageController,
-      centerPage: CenterPage(),
-      leftPage: LeftPage(),
-      rightPage: RightPage(),
-      topPage: TopPage(),
-      bottomPage: BottomPage(),
-      enableLeftPageSwipeBack: true,
-      enableBottomPageSwipeBack: true,
-      enableRightPageSwipeBack: true,
-      enableTopPageSwipeBack: true,
-      swipeThreshold: .2,
-      thresholdFeedback: ThresholdVibration.heavy,
+      controller: _controller,
+      transition: demoTransitions[_settings.transition],
+      backgroundColor: Colors.black,
+      // The center page has an AppBar, so the top zone covers it.
+      verticalDetectionAreaHeight: 140,
+      horizontalDetectionAreaWidth: 60,
+      enableLeftPageSwipeBack: swipeBack,
+      enableRightPageSwipeBack: swipeBack,
+      enableTopPageSwipeBack: swipeBack,
+      enableBottomPageSwipeBack: swipeBack,
+      swipeBackDetectionAreaFraction: 0.3,
+      thresholdFeedback: _settings.haptics
+          ? ThresholdVibration.medium
+          : ThresholdVibration.none,
+      showSidePagePreviews: _settings.previews,
+      pagePreviewStyle: const PagePreviewStyle(
+        leftPageLabel: 'Profile',
+        rightPageLabel: 'Messages',
+        topPageLabel: 'Notifications',
+        bottomPageLabel: 'Discover',
+      ),
+      showReturnToCenterButton: _settings.returnButtons,
+      returnButtonStyle: const ReturnButtonStyle(
+        tooltip: 'Back to home',
+        elevation: 2,
+      ),
       animateCenterPageEntranceOpacity: true,
-
-      verticalDetectionAreaHeight: MediaQuery.sizeOf(context).height * .2,
-      horizontalDetectionAreaWidth: MediaQuery.sizeOf(context).width * .2,
-
-      incomingPageOpacityStart: 0.3,
-      centerPageEntranceAnimationDuration: Duration(seconds: 1),
-
-      /// You can control swiping feature of the CenterPage. Default, enabled.
-      canSwipeFromCenter: () {
-        return true;
-      },
-      onBottomPageOpened: () async {
-        // print('bottom page opened');
-        // await Future.delayed(Duration(seconds: 1));
-        // fivePageController.returnToCenter();
-      },
-      onLeftPageOpened: () async {
-        // print('left page opened');
-        // await Future.delayed(Duration(seconds: 1));
-        // fivePageController.returnToCenter();
-      },
-      onRightPageOpened: () async {
-        // print('right page opened');
-        // await Future.delayed(Duration(seconds: 1));
-        // fivePageController.returnToCenter();
-      },
-      onTopPageOpened: () async {
-        // print('on top page opened');
-        // await Future.delayed(Duration(seconds: 1));
-        // fivePageController.returnToCenter();
-      },
-      onReturnCenterPage: () async {
-        // print('return center page');
-        // await Future.delayed(Duration(seconds: 1));
-        // fivePageController.returnToCenter();
-      },
-      onPageChanged: (p0) {
-        print('page changed: $p0');
-      },
-      pagePreviewStyle: PagePreviewStyle(
-        leftPagePreviewWidget: Align(
-          alignment: Alignment.centerLeft,
-          child: SizedBox(
-            height: 160,
-            width: 90,
-            child: Column(
-              mainAxisSize: MainAxisSize.max,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Expanded(child: LeftPage()),
-              ],
-            ),
-          ),
-        ),
-        leftPageLabel: "Left",
-        rightPageLabel: "Right",
-        topPageLabel: "Top",
-        bottomPageLabel: "Bottom",
-        defaultChipBackgroundColor: Colors.black54,
-        defaultChipTextColor: Colors.white,
-        defaultChipPadding:
-            EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        defaultChipBorderRadius: BorderRadius.all(Radius.circular(20.0)),
+      centerPageEntranceAnimationDuration: const Duration(milliseconds: 600),
+      autofocus: isDesktopOrWeb,
+      onPageChanged: (page) => debugPrint('Page changed: ${page.name}'),
+      centerPage: HomePage(
+        controller: _controller,
+        settings: _settings,
+        onSettingsChanged: (settings) => setState(() => _settings = settings),
       ),
-
-      showReturnToCenterButton: true,
-      returnButtonStyle: ReturnButtonStyle(
-        customButtonBuilder: (context, onPressed, pageType) {
-          if (pageType == PageType.top) {
-            return IconButton.filledTonal(
-              color: Colors.black54,
-              icon: Icon(Icons.arrow_downward, size: 32),
-              onPressed: onPressed,
-            );
-          }
-
-          if (pageType == PageType.bottom) {
-            return IconButton.filledTonal(
-              color: Colors.black54,
-              icon: Icon(Icons.arrow_upward, size: 32),
-              onPressed: onPressed,
-            );
-          }
-
-          return SizedBox.shrink();
-        },
-      ),
-      showSidePagePreviews: true,
+      // No AppBar: the return button only avoids the safe area.
+      leftPage: const ProfilePage(),
+      // AppBar: its automatic back button returns to the center page.
+      rightPage: const MessagesPage(),
+      // Long list: swipe up from its lower part to go back.
+      topPage: const NotificationsPage(),
+      // AppBar + bottom bar: the return button is placed below the AppBar.
+      bottomPage: const DiscoverPage(),
     );
   }
 }

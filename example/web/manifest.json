@@ -1,12 +1,12 @@
 {
-    "name": "example",
-    "short_name": "example",
+    "name": "Five Page Navigation",
+    "short_name": "Five Page",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#3F51B5",
+    "theme_color": "#3F51B5",
+    "description": "Showcase app for the five_page_navigation Flutter package.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

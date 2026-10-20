@@ -1,7 +1,11 @@
+import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'configs/page_preview_style.dart';
@@ -9,205 +13,36 @@ import 'configs/return_button_style.dart';
 import 'enums/page_type.dart';
 import 'enums/swipe_direction.dart';
 import 'enums/threshold_vibration.dart';
-import 'page_wrapper.dart';
+import 'gestures/edge_swipe_recognizer.dart';
+import 'transitions/five_page_transition.dart';
+import 'utils/haptics.dart';
+import 'widgets/return_button.dart';
 
-/// A controller for the [FivePageNavigator] to programmatically trigger page changes.
+part 'five_page_controller.dart';
+
+const Duration _kPreviewHideDuration = Duration(milliseconds: 180);
+const Duration _kPreviewArmDuration = Duration(milliseconds: 150);
+
+/// Navigates between a center page and up to four side pages (left, right,
+/// top and bottom) with edge swipes, like Snapchat.
 ///
-/// This controller allows developers to imperatively control the navigation
-/// within the [FivePageNavigator], initiating swipes to side pages or
-/// returning to the center page without user gesture.
-class FivePageController extends ChangeNotifier {
-  // A private reference to the state of the FivePageNavigator widget.
-  // This allows the controller to call methods on the state.
-  _FivePageNavigatorState? _state;
-
-  /// Attaches this controller to a [_FivePageNavigatorState].
-  ///
-  /// This method is called internally by the [FivePageNavigator] when it's initialized.
-  void _attach(_FivePageNavigatorState state) {
-    _state = state;
-  }
-
-  /// Detaches this controller from its [_FivePageNavigatorState].
-  ///
-  /// This method is called internally when the [FivePageNavigator] is disposed.
-  void _detach() {
-    _state = null;
-  }
-
-  /// Programmatically navigates to the left page.
-  ///
-  /// This action is only effective if the navigator is currently displaying
-  /// the [PageType.center] page and no other navigation or animation is in progress.
-  /// If the `leftPage` is not provided in `FivePageNavigator`, this will have no effect.
-  void navigateLeft() {
-    _state?.programmaticNavigate(PageType.left);
-  }
-
-  /// Programmatically navigates to the right page.
-  ///
-  /// This action is only effective if the navigator is currently displaying
-  /// the [PageType.center] page and no other navigation or animation is in progress.
-  /// If the `rightPage` is not provided in `FivePageNavigator`, this will have no effect.
-  void navigateRight() {
-    _state?.programmaticNavigate(PageType.right);
-  }
-
-  /// Programmatically navigates to the top page.
-  ///
-  /// This action is only effective if the navigator is currently displaying
-  /// the [PageType.center] page and no other navigation or animation is in progress.
-  /// If the `topPage` is not provided in `FivePageNavigator`, this will have no effect.
-  void navigateTop() {
-    _state?.programmaticNavigate(PageType.top);
-  }
-
-  /// Programmatically navigates to the bottom page.
-  ///
-  /// This action is only effective if the navigator is currently displaying
-  /// the [PageType.center] page and no other navigation or animation is in progress.
-  /// If the `bottomPage` is not provided in `FivePageNavigator`, this will have no effect.
-  void navigateBottom() {
-    _state?.programmaticNavigate(PageType.bottom);
-  }
-
-  /// Programmatically returns to the center page from the currently displayed side page.
-  ///
-  /// This action is only effective if a side page is currently displayed and
-  /// no swipe or animation is already in progress.
-  Future<void> returnToCenter() async {
-    await _state?.programmaticReturnToCenter();
-  }
-
-  /// Returns the currently active [PageType] being displayed by the navigator.
-  ///
-  /// Defaults to [PageType.center] if the controller is not yet attached
-  /// or if the state is unavailable.
-  PageType get currentPage => _state?._currentPageType ?? PageType.center;
-}
-
-/// A custom navigator widget that allows swiping between a center page
-/// and four surrounding pages (left, right, top, bottom).
+/// * Drag from an edge of the center page to open the page on that side.
+///   Edge zones are configured with [horizontalDetectionAreaWidth] and
+///   [verticalDetectionAreaHeight].
+/// * Drag a side page back towards the center to close it, when enabled with
+///   [enableLeftPageSwipeBack] and friends.
+/// * Use a [FivePageController], [FivePageNavigator.of], the optional return
+///   button ([showReturnToCenterButton]), the system back button, the
+///   `AppBar` back button or the keyboard to navigate.
 ///
-/// This widget provides a unique navigation experience where users can
-/// intuitively swipe to access related content. It includes features like
-/// customizable swipe thresholds, haptic feedback, side page previews,
-/// and programmatic control.
+/// All pages live in a single route. The center page keeps its state while a
+/// side page is open, and a side page keeps its state for as long as it is
+/// visible (or forever with [maintainSidePageState]).
+///
+/// The navigator sizes itself to the incoming constraints, so it does not
+/// need to be full screen.
 class FivePageNavigator extends StatefulWidget {
-  /// The main page displayed in the center of the navigator.
-  final Widget centerPage;
-
-  /// The page to be displayed when swiping to the left. Can be null if no left page is desired.
-  final Widget? leftPage;
-
-  /// The page to be displayed when swiping to the right. Can be null if no right page is desired.
-  final Widget? rightPage;
-
-  /// The page to be displayed when swiping upwards. Can be null if no top page is desired.
-  final Widget? topPage;
-
-  /// The page to be displayed when swiping downwards. Can be null if no bottom page is desired.
-  final Widget? bottomPage;
-
-  /// The fraction of the screen width/height that a swipe must cover to trigger navigation.
-  ///
-  /// For example, a value of 0.25 means the user must drag 25% of the screen
-  /// dimension in the swipe direction for the navigation to commit.
-  final double swipeThreshold;
-
-  /// Callback invoked when the active page changes.
-  ///
-  /// Provides the [PageType] of the newly active page.
-  final Function(PageType)? onPageChanged;
-
-  /// The height of the vertical detection area at the top and bottom edges
-  /// where vertical swipes are initiated from the center page.
-  ///
-  /// For example, if a swipe starts within the top `verticalDetectionAreaHeight`
-  /// and is primarily vertical, it will be considered a swipe to the top page.
-  final double verticalDetectionAreaHeight;
-
-  /// The width of the horizontal detection area at the left and right edges
-  /// where horizontal swipes are initiated from the center page.
-  ///
-  /// Similar to `verticalDetectionAreaHeight`, but for horizontal swipes.
-  final double horizontalDetectionAreaWidth;
-
-  /// Enables or disables the swipe-back gesture from the left page to return to center.
-  final bool enableLeftPageSwipeBack;
-
-  /// Enables or disables the swipe-back gesture from the right page to return to center.
-  final bool enableRightPageSwipeBack;
-
-  /// Enables or disables the swipe-back gesture from the top page to return to center.
-  final bool enableTopPageSwipeBack;
-
-  /// Enables or disables the swipe-back gesture from the bottom page to return to center.
-  final bool enableBottomPageSwipeBack;
-
-  /// An optional callback function that determines if a swipe gesture from the
-  /// center page should be allowed.
-  ///
-  /// If this function returns `false`, gestures from the center page will be ignored.
-  /// If `null`, swipes are always allowed by default.
-  final bool Function()? canSwipeFromCenter;
-
-  /// The type of haptic feedback (vibration) to provide when the swipe threshold is met.
-  final ThresholdVibration thresholdFeedback;
-
-  /// Callback invoked when the navigator successfully returns to the center page.
-  ///
-  /// This happens after completing a swipe-back gesture or programmatic return.
-  final VoidCallback? onReturnCenterPage;
-
-  /// Callback invoked when the left page is opened (becomes the active page).
-  final VoidCallback? onLeftPageOpened;
-
-  /// Callback invoked when the right page is opened (becomes the active page).
-  final VoidCallback? onRightPageOpened;
-
-  /// Callback invoked when the top page is opened (becomes the active page).
-  final VoidCallback? onTopPageOpened;
-
-  /// Callback invoked when the bottom page is opened (becomes the active page).
-  final VoidCallback? onBottomPageOpened;
-
-  /// Determines if a preview of the destination side page should be shown
-  /// during a swipe gesture from the center.
-  final bool showSidePagePreviews;
-
-  /// Optional configuration for the appearance and behavior of side page previews.
-  ///
-  /// If `null`, a default preview style will be used.
-  final PagePreviewStyle? pagePreviewStyle;
-
-  /// The starting opacity of the incoming page (either a side page during swipe-in
-  /// or the center page during swipe-back).
-  ///
-  /// The page fades in from this opacity to 1.0.
-  final double incomingPageOpacityStart;
-
-  /// Determines if the center page should animate its entrance opacity when the
-  /// navigator is first built.
-  final bool animateCenterPageEntranceOpacity;
-
-  /// The duration of the center page entrance opacity animation.
-  ///
-  /// This property only applies if `animateCenterPageEntranceOpacity` is `true`.
-  final Duration centerPageEntranceAnimationDuration;
-
-  /// Determines if a button to return to the center page should be displayed
-  /// on the side pages.
-  final bool showReturnToCenterButton;
-
-  /// Optional configuration for the return-to-center button's appearance and behavior.
-  ///
-  /// If `null`, a default button style will be used.
-  final ReturnButtonStyle? returnButtonStyle;
-
-  /// An optional [FivePageController] to programmatically control the navigator.
-  final FivePageController? controller;
-
+  /// Creates a five page navigator.
   const FivePageNavigator({
     super.key,
     required this.centerPage,
@@ -215,16 +50,25 @@ class FivePageNavigator extends StatefulWidget {
     this.rightPage,
     this.topPage,
     this.bottomPage,
+    this.controller,
+    this.transition,
+    this.transitionDuration = const Duration(milliseconds: 300),
+    this.transitionCurve = Curves.easeOutCubic,
     this.swipeThreshold = 0.25,
-    this.onPageChanged,
+    this.swipeBackThreshold,
+    this.flingVelocityThreshold = 700.0,
     this.verticalDetectionAreaHeight = 200.0,
     this.horizontalDetectionAreaWidth = 100.0,
+    this.swipeBackDetectionAreaFraction = 0.4,
     this.enableLeftPageSwipeBack = false,
     this.enableRightPageSwipeBack = false,
     this.enableTopPageSwipeBack = false,
     this.enableBottomPageSwipeBack = false,
     this.canSwipeFromCenter,
+    this.prioritizeEdgeSwipes = true,
+    this.swipeDeviceKinds,
     this.thresholdFeedback = ThresholdVibration.heavy,
+    this.onPageChanged,
     this.onReturnCenterPage,
     this.onLeftPageOpened,
     this.onRightPageOpened,
@@ -232,1124 +76,1219 @@ class FivePageNavigator extends StatefulWidget {
     this.onBottomPageOpened,
     this.showSidePagePreviews = false,
     this.pagePreviewStyle,
-    this.incomingPageOpacityStart = 0.1,
+    @Deprecated(
+      'Use transition: FivePageTransition.slide(incomingOpacityStart: x, '
+      'outgoingOpacityEnd: x) instead. '
+      'This feature was deprecated after v3.0.0.',
+    )
+    this.incomingPageOpacityStart,
     this.animateCenterPageEntranceOpacity = false,
     this.centerPageEntranceAnimationDuration = kThemeAnimationDuration,
     this.showReturnToCenterButton = false,
     this.returnButtonStyle,
-    this.controller,
-  }) : assert(
-          !(animateCenterPageEntranceOpacity == false &&
-              centerPageEntranceAnimationDuration != kThemeAnimationDuration),
-          'centerPageEntranceAnimationDuration only applies when animateCenterPageEntranceOpacity is true.',
+    this.maintainSidePageState = false,
+    this.handleBackButton = true,
+    this.implyAppBarBackButton = true,
+    this.enableKeyboardShortcuts = true,
+    this.autofocus = false,
+    this.backgroundColor,
+    this.clipBehavior = Clip.hardEdge,
+  })  : assert(swipeThreshold > 0 && swipeThreshold <= 1),
+        assert(
+          swipeBackThreshold == null ||
+              (swipeBackThreshold > 0 && swipeBackThreshold <= 1),
+        ),
+        assert(flingVelocityThreshold > 0),
+        assert(verticalDetectionAreaHeight >= 0),
+        assert(horizontalDetectionAreaWidth >= 0),
+        assert(
+          swipeBackDetectionAreaFraction >= 0 &&
+              swipeBackDetectionAreaFraction <= 1,
+        ),
+        assert(
+          incomingPageOpacityStart == null ||
+              (incomingPageOpacityStart >= 0 && incomingPageOpacityStart <= 1),
         );
 
-  @override
-  State<FivePageNavigator> createState() => _FivePageNavigatorState();
-}
+  /// The page shown when no side page is open.
+  final Widget centerPage;
 
-class _FivePageNavigatorState extends State<FivePageNavigator>
-    with TickerProviderStateMixin {
-  /// Flag to ensure haptic feedback is triggered only once per swipe gesture.
-  bool _hasTriggerHapticFeedback = false;
+  /// The page revealed by swiping right from the left edge. Optional.
+  final Widget? leftPage;
 
-  /// Controls the animation for the swipe transition between pages.
+  /// The page revealed by swiping left from the right edge. Optional.
+  final Widget? rightPage;
+
+  /// The page revealed by swiping down from the top edge. Optional.
+  final Widget? topPage;
+
+  /// The page revealed by swiping up from the bottom edge. Optional.
+  final Widget? bottomPage;
+
+  /// Controls the navigator programmatically and reports the active page.
+  final FivePageController? controller;
+
+  /// How the pages animate. Defaults to [FivePageTransition.slide].
   ///
-  /// Its value represents the progress of the swipe (0.0 = center page visible, 1.0 = side page visible).
-  late AnimationController _swipeTransitionController;
+  /// See [FivePageTransition] for the built-in transitions, or use
+  /// [FivePageTransition.custom] to write your own.
+  final FivePageTransition? transition;
 
-  /// The current normalized progress of the user's swipe gesture (0.0 to 1.0).
+  /// Duration of a complete transition. A transition that settles after a
+  /// drag only takes the remaining fraction of this duration.
   ///
-  /// Negative values are clamped to 0.0, and values > 1.0 are clamped to 1.0.
-  double _swipeProgress = 0.0;
+  /// Transitions are instant when the platform asks to reduce motion
+  /// ([MediaQueryData.disableAnimations]).
+  final Duration transitionDuration;
 
-  /// The determined direction of the current swipe gesture, if any.
-  SwipeDirection? _currentSwipeDirection;
+  /// Curve applied while a transition settles.
+  final Curve transitionCurve;
 
-  /// The local position where the drag gesture initially started.
-  Offset? _dragStartPosition;
+  /// Fraction of the navigator's width or height a drag must cover to open a
+  /// side page. Also used for swipe-back when [swipeBackThreshold] is `null`.
+  final double swipeThreshold;
 
-  /// A [ValueNotifier] to manage the state of whether the navigator is currently
-  /// animating a return to the center page.
-  late ValueNotifier<bool> _isReturningToCenterNotifier;
+  /// Fraction of the navigator's width or height a swipe-back drag must
+  /// cover to return to the center page. Defaults to [swipeThreshold].
+  final double? swipeBackThreshold;
 
-  /// Stores the type of page that is currently returning to the center.
-  PageType? _returningFromPageType;
+  /// Speed, in logical pixels per second, above which a released drag
+  /// completes (or cancels, when flung backwards) regardless of the
+  /// threshold.
+  final double flingVelocityThreshold;
 
-  /// The effective [PagePreviewStyle] being used, either from widget properties or a default.
-  late PagePreviewStyle _effectivePreviewConfig;
+  /// Height of the zones at the top and bottom edges of the center page
+  /// where vertical swipes can start.
+  final double verticalDetectionAreaHeight;
 
-  /// Controls the initial entrance opacity animation for the center page.
-  AnimationController? _centerPageEntranceController;
+  /// Width of the zones at the left and right edges of the center page where
+  /// horizontal swipes can start.
+  final double horizontalDetectionAreaWidth;
 
-  /// The animation for the center page's opacity during its initial entrance.
-  Animation<double>? _centerPageEntranceOpacityAnimation;
+  /// Size of the zone, as a fraction of the navigator's width or height, from
+  /// which a swipe-back gesture can start on a side page. The zone lies on
+  /// the edge that faces the center page.
+  final double swipeBackDetectionAreaFraction;
 
-  /// The currently active [PageType] displayed by the navigator.
-  PageType _currentPageType = PageType.center;
+  /// Whether the left page can be closed by swiping left.
+  final bool enableLeftPageSwipeBack;
 
-  /// The fixed duration for page transition animations (swipe-in and swipe-out).
-  static const Duration _fixedSwipeAnimationDuration =
-      Duration(milliseconds: 300);
+  /// Whether the right page can be closed by swiping right.
+  final bool enableRightPageSwipeBack;
 
-  /// A small threshold to determine if a drag is primarily horizontal or vertical.
-  /// Drags below this delta do not lock a direction.
-  static const double _directionLockThreshold = 5.0;
+  /// Whether the top page can be closed by swiping up.
+  final bool enableTopPageSwipeBack;
 
-  @override
-  void initState() {
-    super.initState();
-    _effectivePreviewConfig =
-        widget.pagePreviewStyle ?? const PagePreviewStyle();
+  /// Whether the bottom page can be closed by swiping down.
+  final bool enableBottomPageSwipeBack;
 
-    _swipeTransitionController = AnimationController(
-      duration: _fixedSwipeAnimationDuration,
-      vsync: this,
-    );
+  /// Called when a pointer lands on an edge zone of the center page. Return
+  /// `false` to ignore swipes, for example while a camera is recording.
+  final bool Function()? canSwipeFromCenter;
 
-    // Initialize the ValueNotifier for the returning-to-center state.
-    _isReturningToCenterNotifier = ValueNotifier<bool>(false);
+  /// Whether swipes that start inside an edge zone win against scrollables
+  /// and other drag gestures of the pages.
+  ///
+  /// When `true` (the default), the navigator claims a drag in the edge zone
+  /// as soon as it moves half the usual touch slop in an allowed direction.
+  /// When `false`, a scrollable under the pointer that scrolls along the same
+  /// axis takes the gesture.
+  final bool prioritizeEdgeSwipes;
 
-    // Initialize the center page entrance animation if enabled.
-    if (widget.animateCenterPageEntranceOpacity) {
-      _centerPageEntranceController = AnimationController(
-        duration: widget.centerPageEntranceAnimationDuration,
-        vsync: this,
-      );
-      // Start the animation after the first frame is rendered.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _centerPageEntranceController?.forward();
-        }
-      });
-      _centerPageEntranceOpacityAnimation =
-          Tween<double>(begin: 0.0, end: 1.0).animate(
-        CurvedAnimation(
-          parent: _centerPageEntranceController!,
-          curve: Curves.easeIn,
-        ),
-      );
-    }
+  /// Pointer kinds that can swipe between pages. `null` allows all kinds,
+  /// including the mouse on desktop and web.
+  final Set<PointerDeviceKind>? swipeDeviceKinds;
 
-    // Attach the controller if provided.
-    widget.controller?._attach(this);
+  /// Haptic feedback played when a drag crosses its threshold and when the
+  /// default return button is tapped. Only plays on Android and iOS.
+  final ThresholdVibration thresholdFeedback;
+
+  /// Called after a transition completes with the new active page.
+  final ValueChanged<PageType>? onPageChanged;
+
+  /// Called after returning to the center page.
+  final VoidCallback? onReturnCenterPage;
+
+  /// Called after the left page has opened.
+  final VoidCallback? onLeftPageOpened;
+
+  /// Called after the right page has opened.
+  final VoidCallback? onRightPageOpened;
+
+  /// Called after the top page has opened.
+  final VoidCallback? onTopPageOpened;
+
+  /// Called after the bottom page has opened.
+  final VoidCallback? onBottomPageOpened;
+
+  /// Whether dragging from the center page shows a preview of the side page
+  /// instead of moving the pages. See [PagePreviewStyle].
+  final bool showSidePagePreviews;
+
+  /// Appearance of the previews shown when [showSidePagePreviews] is `true`.
+  final PagePreviewStyle? pagePreviewStyle;
+
+  /// Opacity of the incoming page when the default slide transition starts.
+  @Deprecated(
+    'Use transition: FivePageTransition.slide(incomingOpacityStart: x, '
+    'outgoingOpacityEnd: x) instead. '
+    'This feature was deprecated after v3.0.0.',
+  )
+  final double? incomingPageOpacityStart;
+
+  /// Whether the center page fades in when the navigator is first shown.
+  final bool animateCenterPageEntranceOpacity;
+
+  /// Duration of the center page fade-in.
+  final Duration centerPageEntranceAnimationDuration;
+
+  /// Whether side pages show a button that returns to the center page.
+  ///
+  /// Recommended on desktop and web, where edge swipes with a mouse are not
+  /// discoverable.
+  final bool showReturnToCenterButton;
+
+  /// Appearance of the return button.
+  final ReturnButtonStyle? returnButtonStyle;
+
+  /// Whether side pages stay alive (offstage, with their tickers paused)
+  /// after the user returns to the center page.
+  ///
+  /// When `false` (the default), a side page is built when its transition
+  /// starts and disposed after the user returns to the center page, which
+  /// keeps memory usage low. The center page is always kept alive.
+  final bool maintainSidePageState;
+
+  /// Whether the system back button (Android, browser-less web) and
+  /// `Navigator.maybePop` return to the center page while a side page is
+  /// open.
+  ///
+  /// This uses a [LocalHistoryEntry] on the enclosing [ModalRoute], so it
+  /// does nothing when the navigator is not inside a route (for example in
+  /// `MaterialApp.builder`). It also disables the iOS swipe-back gesture of
+  /// the enclosing route while a side page is open.
+  final bool handleBackButton;
+
+  /// Whether an `AppBar` on a side page shows its automatic back button,
+  /// which returns to the center page.
+  ///
+  /// Only applies when [handleBackButton] is `true`. Set it to `false` when
+  /// side pages show their own leading widget or the return button.
+  final bool implyAppBarBackButton;
+
+  /// Whether hardware keyboard shortcuts are enabled.
+  ///
+  /// * <kbd>Alt</kbd> + arrow key on the center page opens the page in that
+  ///   direction.
+  /// * <kbd>Esc</kbd>, or <kbd>Alt</kbd> + the arrow key pointing back to the
+  ///   center, returns from a side page.
+  ///
+  /// Shortcuts are handled while the focus is inside the navigator and no
+  /// text field is being edited. Clicking the navigator with a mouse moves the
+  /// focus into it.
+  final bool enableKeyboardShortcuts;
+
+  /// Whether the navigator requests focus when it is first built, so the
+  /// keyboard shortcuts work immediately.
+  final bool autofocus;
+
+  /// Color painted behind the pages. Visible through transparent pages and
+  /// during transitions that scale, fade or rotate the pages.
+  final Color? backgroundColor;
+
+  /// How pages that move outside the navigator's bounds are clipped.
+  final Clip clipBehavior;
+
+  /// The state of the closest [FivePageNavigator] that encloses [context].
+  ///
+  /// Throws when there is none; see [maybeOf].
+  static FivePageNavigatorState of(BuildContext context) {
+    final state = maybeOf(context);
+    assert(() {
+      if (state == null) {
+        throw FlutterError.fromParts(<DiagnosticsNode>[
+          ErrorSummary('FivePageNavigator.of() called with a context that '
+              'does not contain a FivePageNavigator.'),
+          ErrorHint('Call it from a widget that is built inside one of the '
+              'pages, or use a FivePageController.'),
+          context.describeElement('The context used was'),
+        ]);
+      }
+      return true;
+    }());
+    return state!;
+  }
+
+  /// The state of the closest [FivePageNavigator] that encloses [context],
+  /// or `null`.
+  static FivePageNavigatorState? maybeOf(BuildContext context) {
+    return context.findAncestorStateOfType<FivePageNavigatorState>();
   }
 
   @override
-  void didUpdateWidget(covariant FivePageNavigator oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Update effective preview config if it changes.
-    if (widget.pagePreviewStyle != oldWidget.pagePreviewStyle) {
-      _effectivePreviewConfig =
-          widget.pagePreviewStyle ?? const PagePreviewStyle();
-    }
-    // Handle controller re-attachment if the controller instance changes.
-    if (widget.controller != oldWidget.controller) {
-      oldWidget.controller?._detach();
-      widget.controller?._attach(this);
-    }
-  }
+  State<FivePageNavigator> createState() => FivePageNavigatorState();
 
-  @override
-  void dispose() {
-    _swipeTransitionController.dispose();
-    _centerPageEntranceController?.dispose();
-    _isReturningToCenterNotifier.dispose();
-    widget.controller?._detach();
-    super.dispose();
-  }
-
-  /// Provides debugging information for the widget's properties.
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties
-        .add(DiagnosticsProperty<Widget>('centerPage', widget.centerPage));
-    properties.add(DiagnosticsProperty<bool>(
-        'showSidePagePreviews', widget.showSidePagePreviews));
-    properties.add(DiagnosticsProperty<bool>('animateCenterPageEntranceOpacity',
-        widget.animateCenterPageEntranceOpacity));
-    if (widget.animateCenterPageEntranceOpacity) {
-      properties.add(DiagnosticsProperty<Duration>(
-          'centerPageEntranceAnimationDuration',
-          widget.centerPageEntranceAnimationDuration));
+      ..add(FlagProperty('leftPage',
+          value: leftPage != null, ifTrue: 'has left page'))
+      ..add(FlagProperty('rightPage',
+          value: rightPage != null, ifTrue: 'has right page'))
+      ..add(FlagProperty('topPage',
+          value: topPage != null, ifTrue: 'has top page'))
+      ..add(FlagProperty('bottomPage',
+          value: bottomPage != null, ifTrue: 'has bottom page'))
+      ..add(DiagnosticsProperty<FivePageTransition>('transition', transition,
+          defaultValue: null))
+      ..add(DiagnosticsProperty<Duration>(
+          'transitionDuration', transitionDuration))
+      ..add(DoubleProperty('swipeThreshold', swipeThreshold))
+      ..add(DoubleProperty('swipeBackThreshold', swipeBackThreshold,
+          defaultValue: null))
+      ..add(EnumProperty<ThresholdVibration>(
+          'thresholdFeedback', thresholdFeedback))
+      ..add(FlagProperty('showSidePagePreviews',
+          value: showSidePagePreviews, ifTrue: 'previews'))
+      ..add(FlagProperty('showReturnToCenterButton',
+          value: showReturnToCenterButton, ifTrue: 'return button'))
+      ..add(FlagProperty('maintainSidePageState',
+          value: maintainSidePageState, ifTrue: 'maintain side page state'))
+      ..add(DiagnosticsProperty<FivePageController>('controller', controller,
+          defaultValue: null));
+  }
+}
+
+/// The state of a [FivePageNavigator].
+///
+/// Obtain it with [FivePageNavigator.of] from inside a page to navigate
+/// without a [FivePageController].
+class FivePageNavigatorState extends State<FivePageNavigator>
+    with TickerProviderStateMixin {
+  late final AnimationController _transitionController;
+  late final AnimationController _previewController;
+  late final AnimationController _entranceController;
+  late Animation<double> _entranceOpacity;
+
+  final Map<PageType, GlobalKey> _pageKeys = <PageType, GlobalKey>{
+    for (final type in PageType.values)
+      type: GlobalKey(debugLabel: 'FivePageNavigator.${type.name}'),
+  };
+  final FocusNode _focusNode = FocusNode(
+    debugLabel: 'FivePageNavigator',
+    skipTraversal: true,
+  );
+
+  /// Side pages that were opened at least once, kept alive when
+  /// [FivePageNavigator.maintainSidePageState] is `true`.
+  final Set<PageType> _visitedPages = <PageType>{};
+
+  PageType _currentPage = PageType.center;
+
+  // The running transition, if any.
+  PageType? _from;
+  PageType? _to;
+  SwipeDirection? _direction;
+  Completer<bool>? _transitionCompleter;
+
+  bool _isDragging = false;
+  bool _thresholdReached = false;
+
+  /// The side page whose preview is shown while dragging from the center.
+  PageType? _previewTarget;
+
+  ModalRoute<Object?>? _route;
+  LocalHistoryEntry? _historyEntry;
+  bool _removingHistoryEntry = false;
+
+  Size _size = Size.zero;
+
+  /// The active page. During a transition this is the page the transition
+  /// started from.
+  PageType get currentPage => _currentPage;
+
+  /// Whether a drag or an animation between pages is in progress.
+  bool get isTransitioning => _to != null || _isDragging;
+
+  /// Whether [page] is configured.
+  bool canNavigateTo(PageType page) => _pageWidget(page) != null;
+
+  /// Shows [page] and completes with `true` once it is the active page.
+  ///
+  /// * Navigating to a side page from another side page returns to the
+  ///   center first.
+  /// * While the user drags, the call is ignored and completes with `false`.
+  /// * While a transition runs, navigating to its destination waits for it,
+  ///   and navigating to its origin reverses it. Other targets are ignored.
+  /// * Completes with `false` when [page] is not configured or the
+  ///   transition was interrupted (for example by the back button).
+  Future<bool> navigateTo(PageType page, {bool animate = true}) async {
+    if (!mounted || _isDragging) return false;
+    if (_pageWidget(page) == null) return false;
+
+    final running = _to;
+    if (running != null) {
+      if (running == page) return _transitionCompleter!.future;
+      if (_from == page) {
+        await _settle(commit: false, animate: animate);
+        return mounted && _currentPage == page;
+      }
+      return false;
     }
-    properties.add(DiagnosticsProperty<bool>(
-        'showReturnToCenterButton', widget.showReturnToCenterButton));
-    properties.add(DiagnosticsProperty<ReturnButtonStyle?>(
-        'returnButtonConfig', widget.returnButtonStyle));
-    properties.add(
-        DiagnosticsProperty<PageType>('_currentPageType', _currentPageType));
-    properties.add(DiagnosticsProperty<FivePageController?>(
-        'controller', widget.controller));
+
+    if (page == _currentPage) return true;
+
+    if (page.isSide && _currentPage.isSide) {
+      final returned = await navigateTo(PageType.center, animate: animate);
+      if (!returned || !mounted) return false;
+      return navigateTo(page, animate: animate);
+    }
+
+    _beginTransition(page);
+    return _settle(commit: true, animate: animate);
   }
 
-  //* --- Gesture Handling ---
+  /// Returns to the center page. See [navigateTo].
+  Future<bool> returnToCenter({bool animate = true}) =>
+      navigateTo(PageType.center, animate: animate);
 
-  /// Handles the beginning of a pan gesture.
-  ///
-  /// Initializes drag state, but only if no animations are running and
-  /// the current page is the center page, and `canSwipeFromCenter` allows it.
-  void _handlePanStart(DragStartDetails details) {
-    // Prevent new drags if an animation is already in progress or returning to center.
-    if (_swipeTransitionController.isAnimating ||
-        _isReturningToCenterNotifier.value) {
-      _dragStartPosition = null;
-      return;
-    }
-    // Only allow swipe from the center page.
-    if (_currentPageType != PageType.center) {
-      _dragStartPosition = null;
-      return;
-    }
-    // Consult the `canSwipeFromCenter` callback if provided.
-    bool canSwipe = widget.canSwipeFromCenter?.call() ?? true;
-    if (!canSwipe) {
-      _dragStartPosition = null;
-      return;
-    }
-    // Initialize drag state.
-    _dragStartPosition = details.localPosition;
-    _currentSwipeDirection = null;
-    _swipeProgress = 0.0;
-    _hasTriggerHapticFeedback = false;
-    _swipeTransitionController.value = 0.0;
+  // --- Lifecycle -------------------------------------------------------------
+
+  @override
+  void initState() {
+    super.initState();
+    _transitionController = AnimationController(vsync: this);
+    _previewController = AnimationController(vsync: this);
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: widget.centerPageEntranceAnimationDuration,
+      value: widget.animateCenterPageEntranceOpacity ? 0.0 : 1.0,
+    );
+    _entranceOpacity = _createEntranceOpacity();
+    if (widget.animateCenterPageEntranceOpacity) _entranceController.forward();
+    _focusNode.canRequestFocus = widget.enableKeyboardShortcuts;
+    widget.controller?._attach(this);
   }
 
-  /// Handles updates during a pan gesture.
-  ///
-  /// Calculates the swipe progress, determines the swipe direction (if not already set),
-  /// and updates the animation controller's value accordingly.
-  /// Also triggers haptic feedback when the `swipeThreshold` is met.
-  void _handlePanUpdate(DragUpdateDetails details) {
-    // Do nothing if drag hasn't started, or an animation is already active, or returning to center.
-    if (_dragStartPosition == null ||
-        _swipeTransitionController.isAnimating ||
-        _isReturningToCenterNotifier.value) {
-      return;
-    }
+  Animation<double> _createEntranceOpacity() =>
+      widget.animateCenterPageEntranceOpacity
+          ? CurvedAnimation(parent: _entranceController, curve: Curves.easeIn)
+          : kAlwaysCompleteAnimation;
 
-    final screenSize = MediaQuery.sizeOf(context);
-
-    // Determine the swipe direction if it hasn't been locked yet.
-    if (_currentSwipeDirection == null) {
-      _determineSwipeDirection(details, screenSize);
-    }
-
-    // If a direction is determined, update swipe progress.
-    if (_currentSwipeDirection != null) {
-      double delta; // Change in position along the relevant axis.
-      double dimension; // Total screen dimension along the relevant axis.
-
-      switch (_currentSwipeDirection!) {
-        case SwipeDirection.left:
-        case SwipeDirection.right:
-          delta = details.delta.dx;
-          dimension = screenSize.width;
-          break;
-        case SwipeDirection.up:
-        case SwipeDirection.down:
-          delta = details.delta.dy;
-          dimension = screenSize.height;
-          break;
-      }
-
-      // Calculate progress delta, clamping it to valid range (-1.0 to 1.0).
-      double progressDelta = delta / dimension;
-      if (_currentSwipeDirection == SwipeDirection.left ||
-          _currentSwipeDirection == SwipeDirection.up) {
-        _swipeProgress += progressDelta;
-        _swipeProgress =
-            _swipeProgress.clamp(-1.0, 0.0); // Swiping 'into' negative space
-      } else {
-        _swipeProgress += progressDelta;
-        _swipeProgress =
-            _swipeProgress.clamp(0.0, 1.0); // Swiping 'into' positive space
-      }
-
-      if (!mounted) return; // Ensure widget is still in the tree.
-
-      // Update the animation controller value based on absolute swipe progress.
-      _swipeTransitionController.value = _swipeProgress.abs();
-
-      // Trigger haptic feedback if threshold is met and not yet triggered.
-      if (_swipeTransitionController.value >= widget.swipeThreshold &&
-          !_hasTriggerHapticFeedback) {
-        _triggerHapticFeedback(widget.thresholdFeedback);
-        _hasTriggerHapticFeedback = true;
-      } else if (_swipeTransitionController.value < widget.swipeThreshold) {
-        // Reset haptic feedback flag if swipe falls below threshold.
-        _hasTriggerHapticFeedback = false;
-      }
-    }
-  }
-
-  /// Determines the primary swipe direction (horizontal or vertical) and
-  /// locks it for the duration of the gesture.
-  ///
-  /// This prevents accidental diagonal swipes from triggering unexpected navigations.
-  void _determineSwipeDirection(DragUpdateDetails details, Size screenSize) {
-    final startX = _dragStartPosition!.dx;
-    final startY = _dragStartPosition!.dy;
-    final currentX = details.localPosition.dx;
-    final currentY = details.localPosition.dy;
-    final totalDeltaX = currentX - startX;
-    final totalDeltaY = currentY - startY;
-    final absDeltaX = totalDeltaX.abs();
-    final absDeltaY = totalDeltaY.abs();
-
-    if (absDeltaX > _directionLockThreshold ||
-        absDeltaY > _directionLockThreshold) {
-      if (absDeltaX > absDeltaY) {
-        // Horizontal swipe detected.
-        // Check if swipe originates from a valid horizontal detection area.
-        if (totalDeltaX > 0 &&
-            startX < widget.horizontalDetectionAreaWidth &&
-            widget.leftPage != null) {
-          // Swipe right to reveal left page.
-          _currentSwipeDirection = SwipeDirection.right;
-        } else if (totalDeltaX < 0 &&
-            startX > screenSize.width - widget.horizontalDetectionAreaWidth &&
-            widget.rightPage != null) {
-          // Swipe left to reveal right page.
-          _currentSwipeDirection = SwipeDirection.left;
-        }
-      } else {
-        // Vertical swipe detected.
-        // Check if swipe originates from a valid vertical detection area.
-        if (totalDeltaY > 0 &&
-            startY < widget.verticalDetectionAreaHeight &&
-            widget.topPage != null) {
-          // Swipe down to reveal top page.
-          _currentSwipeDirection = SwipeDirection.down;
-        } else if (totalDeltaY < 0 &&
-            startY > screenSize.height - widget.verticalDetectionAreaHeight &&
-            widget.bottomPage != null) {
-          // Swipe up to reveal bottom page.
-          _currentSwipeDirection = SwipeDirection.up;
-        }
-      }
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != _route) {
+      final hadEntry = _historyEntry != null;
+      _removeHistoryEntry();
+      _route = route;
+      if (hadEntry) _scheduleHistorySync();
     }
   }
 
-  /// Handles the end of a pan gesture.
-  ///
-  /// Based on the final swipe progress, it decides whether to complete the
-  /// navigation to the new page or snap back to the center page.
-  void _handlePanEnd(DragEndDetails details) {
-    // Do nothing if no swipe direction was determined, animation is running, or returning.
-    if (_currentSwipeDirection == null ||
-        _swipeTransitionController.isAnimating ||
-        _isReturningToCenterNotifier.value) {
-      if (!_isReturningToCenterNotifier.value) {
-        // Ensure state is clean.
-        _resetDragState();
-      }
-      return;
-    }
-    _hasTriggerHapticFeedback = false; // Reset for next swipe.
+  @override
+  void didUpdateWidget(FivePageNavigator oldWidget) {
+    super.didUpdateWidget(oldWidget);
 
-    final swipeProgress = _swipeTransitionController.value;
-    if (swipeProgress >= widget.swipeThreshold) {
-      // If threshold met, animate to the target page.
-      _animateToPage();
-    } else {
-      // Otherwise, animate back to the center.
-      _animateBackToCenter();
+    if (widget.controller != oldWidget.controller) {
+      oldWidget.controller?._detach(this);
+      widget.controller?._attach(this);
     }
+
+    _entranceController.duration = widget.centerPageEntranceAnimationDuration;
+    if (widget.animateCenterPageEntranceOpacity !=
+        oldWidget.animateCenterPageEntranceOpacity) {
+      _entranceOpacity = _createEntranceOpacity();
+    }
+    _focusNode.canRequestFocus = widget.enableKeyboardShortcuts;
+
+    if (widget.handleBackButton != oldWidget.handleBackButton ||
+        widget.implyAppBarBackButton != oldWidget.implyAppBarBackButton) {
+      _removeHistoryEntry();
+      _scheduleHistorySync();
+    }
+
+    _handleRemovedPages();
   }
 
-  // --- State Resets ---
-
-  /// Resets the internal state related to the swipe gesture.
-  ///
-  /// [keepControllerValue]: If `true`, the `_swipeTransitionController`'s
-  /// value is not reset to 0.0, useful when another animation takes over.
-  void _resetDragState({bool keepControllerValue = false}) {
-    if (mounted) {
-      _swipeProgress = 0.0;
-      _currentSwipeDirection = null;
-      _dragStartPosition = null;
-
-      if (!keepControllerValue) {
-        if (_swipeTransitionController.isAnimating) {
-          _swipeTransitionController.stop();
-        }
-        _swipeTransitionController.value = 0.0;
-      }
-    }
-  }
-
-  /// Resets the internal state related to returning to the center page.
-  ///
-  /// This is called after a return animation completes.
-  void _resetReturnState() {
-    if (mounted) {
-      // Update the ValueNotifier directly. This will trigger a rebuild for consumers.
-      _isReturningToCenterNotifier.value = false;
-      _returningFromPageType = null;
-      _currentSwipeDirection =
-          null; // Ensure direction is cleared for next swipe.
-      _swipeProgress = 0.0;
-      _dragStartPosition = null;
-
-      if (_swipeTransitionController.isAnimating) {
-        _swipeTransitionController.stop();
-      }
-      _swipeTransitionController.value = 0.0;
-    }
-  }
-
-  // --- Animation and Navigation ---
-
-  /// Triggers haptic feedback based on the specified [ThresholdVibration] type.
-  void _triggerHapticFeedback(ThresholdVibration feedbackType) {
-    switch (feedbackType) {
-      case ThresholdVibration.soft:
-        HapticFeedback.lightImpact();
-        break;
-      case ThresholdVibration.medium:
-        HapticFeedback.mediumImpact();
-        break;
-      case ThresholdVibration.heavy:
-        HapticFeedback.heavyImpact();
-        break;
-    }
-  }
-
-  /// Initiates the animation to transition to the target side page.
-  ///
-  /// This method is called when a swipe gesture successfully crosses the `swipeThreshold`.
-  void _animateToPage() {
-    // Prevent starting animation if no direction or already animating.
-    if (_currentSwipeDirection == null ||
-        _swipeTransitionController.isAnimating) {
+  /// Leaves pages that are no longer configured.
+  void _handleRemovedPages() {
+    bool missing(PageType? type) => type != null && _pageWidget(type) == null;
+    _visitedPages.removeWhere(missing);
+    if (!missing(_from) &&
+        !missing(_to) &&
+        !missing(_currentPage) &&
+        !missing(_previewTarget)) {
       return;
     }
 
-    // Determine the target page type based on the swipe direction.
-    PageType? targetPageType =
-        _getPageTypeFromSwipeDirection(_currentSwipeDirection!);
+    final previous = _currentPage;
+    final completer = _transitionCompleter;
+    _transitionController.stop();
+    _transitionController.value = 0;
+    _previewController.value = 0;
+    _from = _to = _direction = _previewTarget = null;
+    _transitionCompleter = null;
+    _isDragging = false;
+    if (missing(_currentPage)) _currentPage = PageType.center;
+    completer?.complete(false);
 
-    // If target page is null (e.g., no widget provided), snap back.
-    if (targetPageType == null ||
-        _getPageWidgetByType(targetPageType) == null) {
-      debugPrint(
-          "Attempted to navigate to a non-existent page: $targetPageType. Snapping back.");
-      _animateBackToCenter();
-      return;
-    }
-
-    // Animate the swipe transition controller to its forward (1.0) state.
-    _swipeTransitionController
-        .forward(from: _swipeTransitionController.value)
-        .then((_) {
-      if (mounted) {
-        // After animation completes, perform the actual page navigation (push route).
-        _navigateToPageActual();
-      }
-    }).catchError((error) {
-      // Handle potential animation errors.
-      if (mounted) {
-        debugPrint('Animation forward error: $error');
-        _resetDragState(); // Reset state on error.
-      }
-    });
-  }
-
-  /// Initiates the animation to snap back to the center page.
-  ///
-  /// This method is called when a swipe gesture does not meet the `swipeThreshold`.
-  void _animateBackToCenter() {
-    // Prevent starting animation if no direction or already animating.
-    if (_currentSwipeDirection == null ||
-        _swipeTransitionController.isAnimating) {
-      return;
-    }
-
-    // Animate the swipe transition controller back to its reverse (0.0) state.
-    _swipeTransitionController
-        .reverse(from: _swipeTransitionController.value)
-        .then((_) {
-      if (mounted) {
-        _resetDragState(); // Reset drag state after snapping back.
-      }
-    }).catchError((error) {
-      // Handle potential animation errors.
-      if (mounted) {
-        debugPrint('Animation reverse error: $error');
-        _resetDragState(); // Reset state on error.
-      }
-    });
-  }
-
-  /// Handles the return to center from a side page.
-  ///
-  /// This callback is passed to `PageWrapper` and is invoked when a `PageWrapper`
-  /// route is popped (either by its own gesture, button, or system back).
-  /// It orchestrates the reverse animation to show the center page coming back into view.
-  ///
-  /// [returnedFrom]: The [PageType] of the page that is being returned from.
-  /// [popResult]: An optional result from the `Navigator.pop` operation.
-  ///   This is crucial for determining if the animation is needed here, as
-  ///   some pops (like gesture swipe-back from `PageWrapper`) already handle
-  ///   the animation, and we should avoid double animating.
-  void _handleReturnFromPage(PageType returnedFrom, dynamic popResult) {
-    if (!mounted) return;
-
-    // Check if the pop was initiated by a swipe-back gesture from PageWrapper.
-    // If so, PageWrapper has already handled the animation, so we just update state.
-    if (popResult is Map && popResult["type"] == "gesture_pop_completed") {
-      debugPrint(
-          "[_handleReturnFromPage] Handling gesture_pop_completed. Skipping animation.");
-      if (_swipeTransitionController.isAnimating) {
-        _swipeTransitionController.stop(); // Stop any lingering animation.
-      }
-      // Update the ValueNotifier directly to trigger a rebuild and reset state.
-      _isReturningToCenterNotifier.value = false;
-      _currentPageType =
-          PageType.center; // Ensure current page type is updated.
-      widget.onReturnCenterPage?.call(); // Notify parent of return.
-      return; // DO NOT perform another animation.
-    }
-
-    // For button-initiated or programmatic pops, or system back, we need to animate.
-    // Prevent starting a new animation if one is already active or we are already returning.
-    if (_swipeTransitionController.isAnimating ||
-        _isReturningToCenterNotifier.value) {
-      debugPrint(
-          "[_handleReturnFromPage] Navigator is already busy for non-gesture pop.");
-      return;
-    }
-
-    // Update the ValueNotifier. This will trigger a rebuild of _buildSwipeContent
-    // to switch to the "returning to center" animation logic.
-    _isReturningToCenterNotifier.value = true;
-    _returningFromPageType = returnedFrom;
-    // Determine the direction the center page should animate *from*.
-    _currentSwipeDirection = _getReverseSwipeDirection(returnedFrom);
-    _swipeTransitionController.value =
-        1.0; // Start animation from fully revealed state.
-
-    // Notify page changed to center immediately as the transition begins.
-    widget.onPageChanged?.call(PageType.center);
-
-    // Animate the controller in reverse to show the center page.
-    _swipeTransitionController.reverse(from: 1.0).then((_) {
-      if (mounted) {
-        _resetReturnState(); // This will set _isReturningToCenterNotifier.value = false.
-        widget.onReturnCenterPage?.call(); // Notify parent of return.
-        _currentPageType = PageType.center; // Explicitly set current page.
-      }
-    }).catchError((error) {
-      // Handle animation errors.
-      if (mounted) {
-        debugPrint(
-            'Animation reverse error (from _handleReturnFromPage): $error');
-        _resetReturnState();
-        _currentPageType = PageType.center;
-      }
-    });
-  }
-
-  /// Pushes the target side page onto the navigator stack.
-  ///
-  /// This method is called after the initial swipe-in animation completes.
-  /// It wraps the target page in a [PageWrapper] to handle swipe-back gestures
-  /// and the return button.
-  void _navigateToPageActual() {
-    // Do nothing if no direction or not mounted.
-    if (_currentSwipeDirection == null || !mounted) {
-      _resetDragState();
-      return;
-    }
-
-    PageType targetPageType;
-    Widget? targetPageWidget;
-    bool enableSwipeBackForTarget = false;
-
-    // Determine the actual page widget and its swipe-back enablement.
-    switch (_currentSwipeDirection!) {
-      case SwipeDirection.left:
-        targetPageType = PageType.right;
-        targetPageWidget = widget.rightPage;
-        enableSwipeBackForTarget = widget.enableRightPageSwipeBack;
-        break;
-      case SwipeDirection.right:
-        targetPageType = PageType.left;
-        targetPageWidget = widget.leftPage;
-        enableSwipeBackForTarget = widget.enableLeftPageSwipeBack;
-        break;
-      case SwipeDirection.up:
-        targetPageType = PageType.bottom;
-        targetPageWidget = widget.bottomPage;
-        enableSwipeBackForTarget = widget.enableBottomPageSwipeBack;
-        break;
-      case SwipeDirection.down:
-        targetPageType = PageType.top;
-        targetPageWidget = widget.topPage;
-        enableSwipeBackForTarget = widget.enableTopPageSwipeBack;
-        break;
-    }
-
-    // If target page is unexpectedly null, snap back.
-    if (targetPageWidget == null) {
-      debugPrint(
-          "Attempted to navigate to a null page in _navigateToPageActual. Snapping back.");
-      _animateBackToCenter();
-      return;
-    }
-
-    _currentPageType = targetPageType; // Update current page type.
-
-    // Push the PageWrapper route. Using PageRouteBuilder with zero duration
-    // ensures our custom animations manage the transition.
-    Navigator.push(
-      context,
-      PageRouteBuilder(
-        opaque:
-            false, // Allows content underneath to be seen during transitions.
-        pageBuilder: (ctx, anim, secAnim) => PageWrapper(
-          pageType: targetPageType,
-          onReturnFromPage:
-              _handleReturnFromPage, // Callback for when PageWrapper is popped.
-          enableSwipeBack: enableSwipeBackForTarget,
-          centerPage: widget.centerPage,
-          vibration: widget.thresholdFeedback, // Corrected parameter name
-          showReturnToCenterButton: widget.showReturnToCenterButton,
-          returnButtonConfig: widget.returnButtonStyle,
-          incomingPageOpacityStart: widget.incomingPageOpacityStart,
-          child: targetPageWidget!, // The actual side page content.
-        ),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
-        barrierColor:
-            Colors.black, // A dark barrier to prevent visual artifacts.
-        barrierLabel: 'Barrier',
-      ),
-    ).then((result) {
-      // This `.then` block is called when the pushed PageWrapper route is popped.
-      // `_handleReturnFromPage` is the primary handler for all pops and animations.
-      // This block acts as a fallback to ensure state consistency if
-      // `_isReturningToCenterNotifier.value` wasn't set correctly (e.g., if a pop occurred
-      // that wasn't properly routed through `onPopInvokedWithResult` or a button press).
+    // Notify outside of the build phase.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!_isReturningToCenterNotifier.value) {
-        // Check notifier value
-        _resetReturnState();
-        _currentPageType = PageType.center;
+      _syncHistory();
+      if (previous != _currentPage) _notifyPageChanged(_currentPage);
+      widget.controller?._notify();
+    }, debugLabel: 'FivePageNavigator.removedPages');
+  }
+
+  @override
+  void dispose() {
+    _removeHistoryEntry();
+    widget.controller?._detach(this);
+    if (!(_transitionCompleter?.isCompleted ?? true)) {
+      _transitionCompleter!.complete(false);
+    }
+    _transitionController.dispose();
+    _previewController.dispose();
+    _entranceController.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  // --- Helpers ---------------------------------------------------------------
+
+  Widget? _pageWidget(PageType type) => switch (type) {
+        PageType.center => widget.centerPage,
+        PageType.left => widget.leftPage,
+        PageType.right => widget.rightPage,
+        PageType.top => widget.topPage,
+        PageType.bottom => widget.bottomPage,
+      };
+
+  bool _swipeBackEnabled(PageType type) => switch (type) {
+        PageType.center => false,
+        PageType.left => widget.enableLeftPageSwipeBack,
+        PageType.right => widget.enableRightPageSwipeBack,
+        PageType.top => widget.enableTopPageSwipeBack,
+        PageType.bottom => widget.enableBottomPageSwipeBack,
+      };
+
+  /// The side page revealed by dragging the center page in [direction].
+  PageType? _pageRevealedBy(SwipeDirection direction) {
+    final type = switch (direction) {
+      SwipeDirection.right => PageType.left,
+      SwipeDirection.left => PageType.right,
+      SwipeDirection.down => PageType.top,
+      SwipeDirection.up => PageType.bottom,
+    };
+    return _pageWidget(type) != null ? type : null;
+  }
+
+  FivePageTransition get _effectiveTransition {
+    final transition = widget.transition;
+    if (transition != null) return transition;
+    // ignore: deprecated_member_use_from_same_package
+    final opacity = widget.incomingPageOpacityStart ?? 1.0;
+    return FivePageSlideTransition(
+      incomingOpacityStart: opacity,
+      outgoingOpacityEnd: opacity,
+    );
+  }
+
+  double get _activeThreshold => _to == PageType.center
+      ? widget.swipeBackThreshold ?? widget.swipeThreshold
+      : widget.swipeThreshold;
+
+  void _notifyPageChanged(PageType page) {
+    widget.onPageChanged?.call(page);
+    switch (page) {
+      case PageType.center:
         widget.onReturnCenterPage?.call();
-      }
-    });
-
-    _resetDragState(keepControllerValue: false); // Reset drag state.
-
-    // Invoke callbacks for page change and page opened.
-    widget.onPageChanged?.call(targetPageType);
-    switch (targetPageType) {
       case PageType.left:
         widget.onLeftPageOpened?.call();
-        break;
       case PageType.right:
         widget.onRightPageOpened?.call();
-        break;
       case PageType.top:
         widget.onTopPageOpened?.call();
-        break;
       case PageType.bottom:
         widget.onBottomPageOpened?.call();
-        break;
-      case PageType.center: // Should not happen here.
-        break;
     }
   }
 
-  /// Programmatically initiates a swipe to a target page from the center page.
-  ///
-  /// This method is typically called via [FivePageController].
-  /// Does nothing if not currently on the center page or if a swipe is in progress.
-  ///
-  /// [targetPage]: The [PageType] of the page to navigate to.
-  void programmaticNavigate(PageType targetPage) {
-    // Check preconditions for programmatic navigation.
-    if (!mounted ||
-        _currentPageType != PageType.center || // Must be on center page.
-        _swipeTransitionController.isAnimating ||
-        _isReturningToCenterNotifier.value) {
-      // Check notifier value
-      debugPrint(
-          "Programmatic navigation to $targetPage ignored: Not on center page or navigator is busy.");
+  // --- Transitions -----------------------------------------------------------
+
+  void _beginTransition(PageType target) {
+    final from = _currentPage;
+    setState(() {
+      _from = from;
+      _to = target;
+      _direction =
+          target.isCenter ? from.returnDirection : target.openDirection;
+      _transitionCompleter = Completer<bool>();
+      if (target.isSide) _visitedPages.add(target);
+    });
+    _transitionController.value = 0;
+    _thresholdReached = false;
+    widget.controller?._notify();
+  }
+
+  /// Animates the running transition to its end ([commit]) or back to its
+  /// start, then completes it.
+  Future<bool> _settle({required bool commit, bool animate = true}) {
+    final completer = _transitionCompleter!;
+    final target = commit ? 1.0 : 0.0;
+    final distance = (target - _transitionController.value).abs();
+
+    // When opening a side page, add the history entry right away so the
+    // incoming page's AppBar shows its back button during the animation.
+    // When returning, the entry is removed in [_finishTransition] instead, so
+    // the leaving page's AppBar does not change while it is still visible.
+    if (commit && _to!.isSide) _syncHistory(_to);
+
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (!animate ||
+        reduceMotion ||
+        distance == 0 ||
+        widget.transitionDuration == Duration.zero ||
+        _effectiveTransition is FivePageNoTransition) {
+      _transitionController.stop();
+      _transitionController.value = target;
+      _finishTransition(reached: commit);
+      return completer.future;
+    }
+
+    _transitionController
+        .animateTo(
+          target,
+          duration: widget.transitionDuration * distance,
+          curve: widget.transitionCurve,
+        )
+        .orCancel
+        .then<void>(
+      (_) {
+        if (mounted && identical(_transitionCompleter, completer)) {
+          _finishTransition(reached: commit);
+        }
+      },
+      // Interrupted by another settle call or by dispose.
+      onError: (Object _) {},
+    );
+    return completer.future;
+  }
+
+  void _finishTransition({required bool reached}) {
+    final from = _from;
+    final to = _to;
+    if (from == null || to == null) return;
+    final completer = _transitionCompleter;
+    final newPage = reached ? to : from;
+    final changed = newPage != _currentPage;
+
+    setState(() {
+      _currentPage = newPage;
+      _from = _to = _direction = null;
+      _transitionCompleter = null;
+      _isDragging = false;
+    });
+    _transitionController.value = 0;
+    _syncHistory();
+
+    completer?.complete(reached);
+    if (changed) _notifyPageChanged(newPage);
+    widget.controller?._notify();
+  }
+
+  // --- Back button -----------------------------------------------------------
+
+  /// Adds or removes the local history entry so that it exists exactly while
+  /// [page] (defaults to the active page) is a side page.
+  void _syncHistory([PageType? page]) {
+    final wantsEntry = (page ?? _currentPage).isSide &&
+        widget.handleBackButton &&
+        _route != null;
+    if (wantsEntry == (_historyEntry != null)) return;
+
+    if (!wantsEntry) {
+      _removeHistoryEntry();
       return;
     }
-
-    // Determine the necessary swipe direction to reveal the target page.
-    final SwipeDirection? swipeDir =
-        _getSwipeDirectionForTargetPage(targetPage);
-    // If no valid direction or target page is null, ignore.
-    if (swipeDir == null || _getPageWidgetByType(targetPage) == null) {
-      debugPrint(
-          "Programmatic navigation ignored: Target page $targetPage is null or no swipe direction for center.");
+    // Adding an entry rebuilds the route, which is not allowed during build.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      _scheduleHistorySync();
       return;
     }
-
-    // Simulate a drag start and set current swipe direction and full progress.
-    _dragStartPosition = Offset.zero; // A dummy start position.
-    _currentSwipeDirection = swipeDir;
-    _swipeProgress = 1.0; // Ensures the animation proceeds to completion.
-    _hasTriggerHapticFeedback = false; // Reset haptic feedback.
-    _swipeTransitionController.value = 0.0; // Start animation from 0.
-
-    // Trigger the navigation animation and subsequent route push.
-    _animateToPage();
+    final entry = LocalHistoryEntry(
+      onRemove: _handleHistoryEntryRemoved,
+      impliesAppBarDismissal: widget.implyAppBarBackButton,
+    );
+    _historyEntry = entry;
+    _route!.addLocalHistoryEntry(entry);
   }
 
-  /// Programmatically returns to the center page from the currently displayed side page.
-  ///
-  /// This method is typically called via [FivePageController].
-  /// It triggers a `Navigator.pop` operation for the currently active side page route.
-  /// The `_handleReturnFromPage` callback will then manage the return animation.
-  Future<void> programmaticReturnToCenter() async {
-    // Check preconditions for programmatic return.
-    if (!mounted ||
-        _currentPageType == PageType.center || // Must be on a side page.
-        _swipeTransitionController.isAnimating ||
-        _isReturningToCenterNotifier.value) {
-      // Check notifier value
-      debugPrint("Programmatic return ignored: already center or animating.");
-      return Future.value(); // Return a completed future if no action taken.
-    }
-    // Perform a pop operation. The `_navigateToPageActual().then()` block
-    // and `_handleReturnFromPage` will handle the animation and state changes.
-    // We pass a simple string result for debugging/tracking.
-    return Navigator.of(context).pop("controller_return_pop");
+  void _scheduleHistorySync() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncHistory(_to ?? _currentPage);
+    }, debugLabel: 'FivePageNavigator.syncHistory');
   }
 
-  // --- Helper Functions ---
-
-  /// Determines the [SwipeDirection] required to *reveal* a given [targetType] page
-  /// from the center.
-  ///
-  /// Returns `null` if the target is [PageType.center] (cannot swipe to center).
-  SwipeDirection? _getSwipeDirectionForTargetPage(PageType targetType) {
-    switch (targetType) {
-      case PageType.left:
-        return SwipeDirection
-            .right; // To see the left page, one must swipe right.
-      case PageType.right:
-        return SwipeDirection
-            .left; // To see the right page, one must swipe left.
-      case PageType.top:
-        return SwipeDirection.down; // To see the top page, one must swipe down.
-      case PageType.bottom:
-        return SwipeDirection.up; // To see the bottom page, one must swipe up.
-      case PageType.center:
-        return null; // Cannot "swipe" to center; only return.
+  void _removeHistoryEntry() {
+    final entry = _historyEntry;
+    if (entry == null) return;
+    _historyEntry = null;
+    _removingHistoryEntry = true;
+    try {
+      entry.remove();
+    } finally {
+      _removingHistoryEntry = false;
     }
   }
 
-  /// Determines the reverse [SwipeDirection] from a given [fromPage].
-  ///
-  /// This is used to calculate the direction the center page should animate
-  /// from when returning from a side page.
-  SwipeDirection? _getReverseSwipeDirection(PageType fromPage) {
-    switch (fromPage) {
-      // If coming from left, center moves right.
-      case PageType.left:
-        return SwipeDirection.right;
-      // If coming from right, center moves left.
-      case PageType.right:
-        return SwipeDirection.left;
-      // If coming from top, center moves down.
-      case PageType.top:
-        return SwipeDirection.down;
-      // If coming from bottom, center moves up.
-      case PageType.bottom:
-        return SwipeDirection.up;
-      // No reverse direction from center.
-      case PageType.center:
-        return null;
+  /// Called when the route pops our entry: the back button was pressed, or
+  /// a side page called `Navigator.pop`.
+  void _handleHistoryEntryRemoved() {
+    if (_removingHistoryEntry) return;
+    _historyEntry = null;
+    if (!mounted) return;
+
+    final to = _to;
+    if (to == null) {
+      if (_currentPage.isSide) {
+        _beginTransition(PageType.center);
+        _settle(commit: true);
+      }
+    } else {
+      // A drag cannot continue after the page was popped.
+      _isDragging = false;
+      _settle(commit: to.isCenter);
     }
   }
 
-  /// Calculates the final offset for the center page when it is pushed off-screen
-  /// during a swipe to a side page.
-  ///
-  /// [dir]: The direction the center page is being pushed.
-  /// [s]: The size of the screen.
-  Offset _getCenterPageEndOffset(SwipeDirection dir, Size s) {
-    switch (dir) {
-      case SwipeDirection.left:
-        return Offset(-s.width, 0); // Center moves left.
-      case SwipeDirection.right:
-        return Offset(s.width, 0); // Center moves right.
-      case SwipeDirection.up:
-        return Offset(0, -s.height); // Center moves up.
-      case SwipeDirection.down:
-        return Offset(0, s.height); // Center moves down.
+  // --- Gestures --------------------------------------------------------------
+
+  Set<SwipeDirection> _allowedDirectionsAt(Offset position) {
+    if (isTransitioning || _size.isEmpty) return const <SwipeDirection>{};
+    final width = _size.width;
+    final height = _size.height;
+    final directions = <SwipeDirection>{};
+
+    if (_currentPage.isCenter) {
+      if (!(widget.canSwipeFromCenter?.call() ?? true)) return directions;
+      final h = widget.horizontalDetectionAreaWidth;
+      final v = widget.verticalDetectionAreaHeight;
+      if (widget.leftPage != null && position.dx <= h) {
+        directions.add(SwipeDirection.right);
+      }
+      if (widget.rightPage != null && position.dx >= width - h) {
+        directions.add(SwipeDirection.left);
+      }
+      if (widget.topPage != null && position.dy <= v) {
+        directions.add(SwipeDirection.down);
+      }
+      if (widget.bottomPage != null && position.dy >= height - v) {
+        directions.add(SwipeDirection.up);
+      }
+      return directions;
     }
+
+    if (!_swipeBackEnabled(_currentPage)) return directions;
+    final f = widget.swipeBackDetectionAreaFraction;
+    final inZone = switch (_currentPage) {
+      PageType.left => position.dx >= width * (1 - f),
+      PageType.right => position.dx <= width * f,
+      PageType.top => position.dy >= height * (1 - f),
+      PageType.bottom => position.dy <= height * f,
+      PageType.center => false,
+    };
+    if (inZone) directions.add(_currentPage.returnDirection!);
+    return directions;
   }
 
-  /// Calculates the starting off-screen offset for an incoming side page.
-  ///
-  /// [dir]: The direction the side page is coming *from*.
-  /// [s]: The size of the screen.
-  Offset _getOffScreenOffset(SwipeDirection dir, Size s) {
-    switch (dir) {
-      case SwipeDirection.left:
-        // Side page comes from right to fill center.
-        return Offset(s.width, 0);
-      case SwipeDirection.right:
-        // Side page comes from left to fill center.
-        return Offset(-s.width, 0);
-      case SwipeDirection.up:
-        // Side page comes from bottom to fill center.
-        return Offset(0, s.height);
-      case SwipeDirection.down:
-        // Side page comes from top to fill center.
-        return Offset(0, -s.height);
+  bool _handleDragStart(SwipeDirection direction) {
+    if (isTransitioning) return false;
+
+    if (_currentPage.isCenter) {
+      final target = _pageRevealedBy(direction);
+      if (target == null) return false;
+      _isDragging = true;
+      _thresholdReached = false;
+      if (widget.showSidePagePreviews) {
+        _previewController.stop();
+        _previewController.value = 0;
+        setState(() => _previewTarget = target);
+      } else {
+        _beginTransition(target);
+      }
+      return true;
     }
+
+    if (direction != _currentPage.returnDirection) return false;
+    _isDragging = true;
+    _beginTransition(PageType.center);
+    return true;
   }
 
-  /// Retrieves the [Widget] corresponding to the given [targetType] (side page).
-  ///
-  /// Returns `null` if the target is [PageType.center] or if no widget is provided.
-  Widget? _getSwipingPageWidget(PageType targetType) {
-    switch (targetType) {
-      case PageType.right:
-        return widget.rightPage;
-      case PageType.left:
-        return widget.leftPage;
-      case PageType.bottom:
-        return widget.bottomPage;
-      case PageType.top:
-        return widget.topPage;
-      default:
-        return null;
-    }
-  }
-
-  /// Builds or retrieves the preview widget for a given swipe direction.
-  ///
-  /// If a custom preview widget is provided in `_effectivePreviewConfig`, it's used.
-  /// Otherwise, a default [Material] chip with a label is created.
-  /// [direction]: The [SwipeDirection] indicating which page's preview is needed.
-  Widget _getPreviewWidgetOrBuildDefault(SwipeDirection direction) {
-    Widget? customPreviewWidget;
-    String defaultLabel = "";
-
-    Alignment alignment;
-
-    // Determine the correct preview widget and label based on swipe direction.
-    // Note: SwipeDirection.left means swiping left *to reveal* the right page.
-    switch (direction) {
-      case SwipeDirection.left:
-        customPreviewWidget = _effectivePreviewConfig.rightPagePreviewWidget;
-        defaultLabel = _effectivePreviewConfig.rightPageLabel;
-        alignment = Alignment.centerRight;
-        break;
-      case SwipeDirection.right:
-        customPreviewWidget = _effectivePreviewConfig.leftPagePreviewWidget;
-        defaultLabel = _effectivePreviewConfig.leftPageLabel;
-        alignment = Alignment.centerLeft;
-        break;
-      case SwipeDirection.up:
-        customPreviewWidget = _effectivePreviewConfig.bottomPagePreviewWidget;
-        defaultLabel = _effectivePreviewConfig.bottomPageLabel;
-        alignment = Alignment.bottomCenter;
-        break;
-      case SwipeDirection.down:
-        customPreviewWidget = _effectivePreviewConfig.topPagePreviewWidget;
-        defaultLabel = _effectivePreviewConfig.topPageLabel;
-        alignment = Alignment.topCenter;
-        break;
-    }
-
-    // Return custom widget if available, otherwise build default.
-    if (customPreviewWidget != null) {
-      return Material(
-        type: MaterialType.transparency, // Allows background to show through.
-        child: customPreviewWidget,
+  /// The direction and controller driven by the current drag.
+  (SwipeDirection, AnimationController, double)? get _dragTarget {
+    final preview = _previewTarget;
+    if (preview != null && _to == null) {
+      return (
+        preview.openDirection!,
+        _previewController,
+        widget.swipeThreshold
       );
     }
+    final direction = _direction;
+    if (direction == null) return null;
+    return (direction, _transitionController, _activeThreshold);
+  }
 
-    // Default preview chip.
-    return Align(
-      alignment: alignment,
-      child: Material(
-        type: MaterialType.transparency,
-        child: Container(
-          padding: _effectivePreviewConfig.defaultChipPadding,
-          decoration: BoxDecoration(
-            color: _effectivePreviewConfig.defaultChipBackgroundColor,
-            borderRadius: _effectivePreviewConfig.defaultChipBorderRadius,
-          ),
-          child: Text(
-            defaultLabel,
-            style: _effectivePreviewConfig.defaultChipTextStyle ??
-                TextStyle(
-                  color: _effectivePreviewConfig.defaultChipTextColor,
-                  fontSize: 14,
-                ),
+  void _handleDragUpdate(Offset delta) {
+    if (!_isDragging) return;
+    final target = _dragTarget;
+    if (target == null) return;
+    final (direction, controller, threshold) = target;
+
+    final extent =
+        direction.axis == Axis.horizontal ? _size.width : _size.height;
+    if (extent <= 0) return;
+    final vector = direction.vector;
+    final along = delta.dx * vector.dx + delta.dy * vector.dy;
+    controller.value = (controller.value + along / extent).clamp(0.0, 1.0);
+
+    final reached = controller.value >= threshold;
+    if (reached && !_thresholdReached) {
+      playThresholdFeedback(widget.thresholdFeedback);
+    }
+    _thresholdReached = reached;
+  }
+
+  void _handleDragEnd(Velocity velocity) {
+    if (!_isDragging) return;
+    final target = _dragTarget;
+    _isDragging = false;
+    _thresholdReached = false;
+    if (target == null) return;
+    final (direction, controller, threshold) = target;
+
+    final vector = direction.vector;
+    final speed = velocity.pixelsPerSecond.dx * vector.dx +
+        velocity.pixelsPerSecond.dy * vector.dy;
+    final commit = speed.abs() >= widget.flingVelocityThreshold
+        ? speed > 0
+        : controller.value >= threshold;
+
+    if (identical(controller, _previewController)) {
+      _endPreview(commit: commit);
+    } else {
+      _settle(commit: commit);
+    }
+  }
+
+  void _handleDragCancel() {
+    if (!_isDragging) return;
+    _isDragging = false;
+    _thresholdReached = false;
+    if (_previewTarget != null && _to == null) {
+      _endPreview(commit: false);
+    } else if (_to != null) {
+      _settle(commit: false);
+    }
+  }
+
+  void _endPreview({required bool commit}) {
+    final target = _previewTarget!;
+    _previewController
+        .animateTo(0, duration: _kPreviewHideDuration, curve: Curves.easeOut)
+        .orCancel
+        .then<void>(
+      (_) {
+        if (mounted && _previewTarget == target && !_isDragging) {
+          setState(() => _previewTarget = null);
+        }
+      },
+      onError: (Object _) {},
+    );
+    if (commit) {
+      _beginTransition(target);
+      _settle(commit: true);
+    }
+  }
+
+  // --- Keyboard --------------------------------------------------------------
+
+  void _handlePointerDown(PointerDownEvent event) {
+    if (widget.enableKeyboardShortcuts &&
+        event.kind == PointerDeviceKind.mouse &&
+        !_focusNode.hasFocus) {
+      _focusNode.requestFocus();
+    }
+  }
+
+  bool get _isEditingText {
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (focusContext == null) return false;
+    return focusContext.widget is EditableText ||
+        focusContext.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (!widget.enableKeyboardShortcuts ||
+        event is! KeyDownEvent ||
+        isTransitioning ||
+        _isEditingText) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape) {
+      if (_currentPage.isCenter) return KeyEventResult.ignored;
+      returnToCenter();
+      return KeyEventResult.handled;
+    }
+
+    if (!HardwareKeyboard.instance.isAltPressed) return KeyEventResult.ignored;
+    final PageType? page = switch (key) {
+      LogicalKeyboardKey.arrowLeft => PageType.left,
+      LogicalKeyboardKey.arrowRight => PageType.right,
+      LogicalKeyboardKey.arrowUp => PageType.top,
+      LogicalKeyboardKey.arrowDown => PageType.bottom,
+      _ => null,
+    };
+    if (page == null) return KeyEventResult.ignored;
+
+    if (_currentPage.isCenter) {
+      if (!canNavigateTo(page)) return KeyEventResult.ignored;
+      navigateTo(page);
+      return KeyEventResult.handled;
+    }
+    // The arrow pointing from the side page towards the center.
+    if (page.openDirection == _currentPage.openDirection) {
+      returnToCenter();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  // --- Build -----------------------------------------------------------------
+
+  void _handleReturnButtonPressed() {
+    if (isTransitioning) return;
+    playThresholdFeedback(widget.thresholdFeedback);
+    returnToCenter();
+  }
+
+  /// The pages that are currently mounted, in a stable order.
+  Iterable<PageType> get _alivePages => PageType.values.where((type) {
+        if (_pageWidget(type) == null) return false;
+        return type.isCenter ||
+            type == _currentPage ||
+            type == _from ||
+            type == _to ||
+            (widget.maintainSidePageState && _visitedPages.contains(type));
+      });
+
+  /// The page itself, under a [GlobalKey] so that it keeps its state while it
+  /// moves between the transition wrappers.
+  Widget _buildPageContent(PageType type) {
+    final page = _pageWidget(type)!;
+    final Widget child;
+    if (type.isCenter) {
+      child = FadeTransition(opacity: _entranceOpacity, child: page);
+    } else {
+      child = Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          page,
+          if (widget.showReturnToCenterButton)
+            ReturnButtonOverlay(
+              pageType: type,
+              style: widget.returnButtonStyle ?? const ReturnButtonStyle(),
+              onPressed: _handleReturnButtonPressed,
+              pageKey: _pageKeys[type]!,
+            ),
+        ],
+      );
+    }
+    return KeyedSubtree(
+      key: _pageKeys[type],
+      child: RepaintBoundary(child: child),
+    );
+  }
+
+  Widget _buildSlot(
+    PageType type, {
+    required bool visible,
+    Widget Function(Widget child)? wrap,
+  }) {
+    var child = _buildPageContent(type);
+    if (wrap != null) child = wrap(child);
+    return KeyedSubtree(
+      key: ValueKey<PageType>(type),
+      child: Offstage(
+        offstage: !visible,
+        child: TickerMode(
+          enabled: visible,
+          child: ExcludeFocus(
+            excluding: !visible || type != _currentPage,
+            child: child,
           ),
         ),
       ),
     );
   }
 
-  /// Retrieves the [Widget] associated with a given [PageType].
-  ///
-  /// This acts as a central lookup for all pages provided to the navigator.
-  Widget? _getPageWidgetByType(PageType type) {
-    switch (type) {
-      case PageType.center:
-        return widget.centerPage;
-      case PageType.left:
-        return widget.leftPage;
-      case PageType.right:
-        return widget.rightPage;
-      case PageType.top:
-        return widget.topPage;
-      case PageType.bottom:
-        return widget.bottomPage;
-    }
-  }
+  Widget _buildPages(BuildContext context, Size size) {
+    final from = _from;
+    final to = _to;
+    final direction = _direction;
+    final children = <Widget>[
+      for (final type in _alivePages)
+        if (type != _currentPage && type != to)
+          _buildSlot(type, visible: false),
+    ];
 
-  /// Determines the [PageType] that would be revealed by a given [SwipeDirection].
-  ///
-  /// Returns `null` if no page is configured for that direction.
-  PageType? _getPageTypeFromSwipeDirection(SwipeDirection direction) {
-    switch (direction) {
-      case SwipeDirection.left:
-        return widget.rightPage != null ? PageType.right : null;
-      case SwipeDirection.right:
-        return widget.leftPage != null ? PageType.left : null;
-      case SwipeDirection.up:
-        return widget.bottomPage != null ? PageType.bottom : null;
-      case SwipeDirection.down:
-        return widget.topPage != null ? PageType.top : null;
-    }
-  }
-
-  /// Returns the center page widget, wrapped in an [AnimatedBuilder] if
-  /// `animateCenterPageEntranceOpacity` is true.
-  Widget _getAnimatedCenterPage() {
-    if (!widget.animateCenterPageEntranceOpacity ||
-        _centerPageEntranceController == null) {
-      return widget.centerPage;
+    if (from != null && to != null && direction != null) {
+      final transition = _effectiveTransition;
+      final details = FivePageTransitionDetails(
+        progress: _transitionController.value,
+        direction: direction,
+        size: size,
+        from: from,
+        to: to,
+      );
+      final outgoing = _buildSlot(
+        from,
+        visible: true,
+        wrap: (child) => transition.buildOutgoing(context, details, child),
+      );
+      final incoming = _buildSlot(
+        to,
+        visible: true,
+        wrap: (child) => transition.buildIncoming(context, details, child),
+      );
+      children.addAll(transition.incomingOnTop
+          ? <Widget>[outgoing, incoming]
+          : <Widget>[incoming, outgoing]);
+    } else {
+      children.add(_buildSlot(_currentPage, visible: true));
     }
 
-    return AnimatedBuilder(
-      animation: _centerPageEntranceOpacityAnimation!,
-      builder: (context, child) {
-        return AnimatedOpacity(
-          duration: widget.centerPageEntranceAnimationDuration,
-          opacity: _centerPageEntranceOpacityAnimation!.value,
-          child: child,
-        );
-      },
-      child: widget.centerPage,
+    return IgnorePointer(
+      ignoring: to != null,
+      child: Stack(fit: StackFit.expand, children: children),
     );
   }
 
-  // --- Build Methods ---
+  Widget _buildPreview(BuildContext context) {
+    final target = _previewTarget;
+    final value = _previewController.value;
+    if (target == null || value <= 0) return const SizedBox.shrink();
+
+    final style = widget.pagePreviewStyle ?? const PagePreviewStyle();
+    final vector = target.openDirection!.vector;
+    final appearAt = style.previewAppearanceThreshold;
+    final appear = appearAt == null ? 1.0 : (value / appearAt).clamp(0.0, 1.0);
+    final armed = value >= widget.swipeThreshold;
+
+    final (custom, label) = switch (target) {
+      PageType.left => (style.leftPagePreviewWidget, style.leftPageLabel),
+      PageType.right => (style.rightPagePreviewWidget, style.rightPageLabel),
+      PageType.top => (style.topPagePreviewWidget, style.topPageLabel),
+      PageType.bottom => (style.bottomPagePreviewWidget, style.bottomPageLabel),
+      PageType.center => (null, ''),
+    };
+
+    final preview = Material(
+      type: MaterialType.transparency,
+      child: custom ??
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: style.defaultChipBackgroundColor,
+              borderRadius: style.defaultChipBorderRadius,
+            ),
+            child: Padding(
+              padding: style.defaultChipPadding,
+              child: Text(
+                label,
+                style: style.defaultChipTextStyle ??
+                    TextStyle(
+                      color: style.defaultChipTextColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+          ),
+    );
+
+    return IgnorePointer(
+      child: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.all(style.previewOffsetFromEdge),
+          child: Align(
+            alignment: Alignment(-vector.dx, -vector.dy),
+            child: FractionalTranslation(
+              translation: -vector * (1 - appear),
+              child: Opacity(
+                opacity: appear,
+                child: AnimatedScale(
+                  scale: armed ? style.previewScaleBeyondThresholdFactor : 1.0,
+                  duration: _kPreviewArmDuration,
+                  curve: Curves.easeOutBack,
+                  child: Transform.scale(
+                    scale: lerpDouble(
+                      style.previewMinScale,
+                      style.previewMaxScale,
+                      appear,
+                    )!,
+                    child: preview,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    // The outermost [ListenableBuilder] listens to the main animation controller,
-    // which drives the overall swipe progress.
-    return ListenableBuilder(
-      listenable: _swipeTransitionController,
-      builder: (context, _) {
-        // The inner [ValueListenableBuilder] listens specifically to changes in
-        // the `_isReturningToCenterNotifier`. This allows the `_buildSwipeContent`
-        // to switch between "swiping out" and "returning in" logic without
-        // rebuilding the entire `GestureDetector` wrapper each time the flag changes.
-        return ValueListenableBuilder<bool>(
-          valueListenable: _isReturningToCenterNotifier,
-          builder: (context, isReturningToCenter, __) {
-            // [GestureDetector] handles all pan (drag) gestures for navigation.
-            return GestureDetector(
-              onPanStart: _handlePanStart,
-              onPanUpdate: _handlePanUpdate,
-              onPanEnd: _handlePanEnd,
-              behavior: HitTestBehavior
-                  .opaque, // Ensures gestures are captured even in empty spaces.
-              child: SizedBox(
-                width: double.infinity,
-                height: double.infinity,
-                // Calls a helper method to build the dynamic content based on
-                // animation progress and the returning state.
-                child: _buildSwipeContent(
-                    _swipeTransitionController.value, isReturningToCenter),
-              ),
-            );
-          },
-        );
+    // The detector is a child-less layer above the pages. Being hit first,
+    // its recognizer sees every pointer move before the pages' recognizers
+    // do, so an edge swipe is not lost to a scrollable that crosses its slop
+    // on the same event (the same trick Drawer uses).
+    final edgeDetector = RawGestureDetector(
+      behavior: HitTestBehavior.translucent,
+      gestures: <Type, GestureRecognizerFactory>{
+        EdgeSwipeGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<EdgeSwipeGestureRecognizer>(
+          () => EdgeSwipeGestureRecognizer(debugOwner: this),
+          (recognizer) => recognizer
+            ..supportedDevices = widget.swipeDeviceKinds
+            ..prioritize = widget.prioritizeEdgeSwipes
+            ..resolveDirections = _allowedDirectionsAt
+            ..onStart = _handleDragStart
+            ..onUpdate = _handleDragUpdate
+            ..onEnd = _handleDragEnd
+            ..onCancel = _handleDragCancel,
+        ),
       },
     );
-  }
 
-  /// Builds the content displayed during swipe (drag) and swipe transitions.
-  ///
-  /// This method is responsible for rendering the center page, the incoming side page,
-  /// and the preview overlay based on the current `animationProgress` and state.
-  ///
-  /// [animationProgress]: The current value of the `_swipeTransitionController` (0.0 to 1.0).
-  /// [isReturningToCenter]: A boolean indicating if the navigator is currently animating
-  ///   a return from a side page to the center.
-  Widget _buildSwipeContent(
-      double animationProgress, bool isReturningToCenter) {
-    final size = MediaQuery.sizeOf(context);
-    List<Widget> stackChildren = [];
-
-    // The center page, potentially with an entrance opacity animation.
-    final Widget animatedCenterPage = _getAnimatedCenterPage();
-
-    if (isReturningToCenter) {
-      // Logic for animating back to the center page from a side page.
-      Widget pageComingOnScreen = widget.centerPage;
-      Widget pageGoingOffScreen =
-          _getPageWidgetByType(_returningFromPageType!)!; // The side page.
-      SwipeDirection effectiveDirection = _currentSwipeDirection!;
-
-      // Calculate offsets for the center page coming back into view.
-      final centerPushedOffset =
-          _getCenterPageEndOffset(effectiveDirection, size);
-      // `incomingPageProgress` goes from 0.0 to 1.0 as center page comes into view.
-      final incomingPageProgress = 1.0 - animationProgress;
-      final offsetForOnScreen =
-          Offset.lerp(centerPushedOffset, Offset.zero, incomingPageProgress)!;
-
-      // Calculate offsets for the side page going off screen.
-      final sideOffScreenOffset = _getOffScreenOffset(effectiveDirection, size);
-      final offsetForOffScreen =
-          Offset.lerp(Offset.zero, sideOffScreenOffset, incomingPageProgress)!;
-
-      // Add the center page, sliding in and fading in.
-      stackChildren.add(
-        Transform.translate(
-          offset: offsetForOnScreen,
-          child: Opacity(
-            opacity: lerpDouble(
-              widget.incomingPageOpacityStart, // Starts less visible.
-              1.0, // Ends fully visible.
-              incomingPageProgress,
-            )!,
-            child: pageComingOnScreen,
-          ),
+    // Pages are built here, during the build phase, and never inside a
+    // LayoutBuilder: moving a page between transition wrappers reparents its
+    // GlobalKey, which must not happen during layout (pages may contain
+    // OverlayPortals, for example tooltips).
+    Widget content = Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        AnimatedBuilder(
+          animation: _transitionController,
+          builder: (context, _) => _buildPages(context, _size),
         ),
-      );
-
-      // Add the side page, sliding out and fading out.
-      stackChildren.add(
-        Transform.translate(
-          offset: offsetForOffScreen,
-          child: Opacity(
-            opacity: 1.0 - incomingPageProgress, // Fades out.
-            child: pageGoingOffScreen,
-          ),
+        AnimatedBuilder(
+          animation: _previewController,
+          builder: (context, _) => _buildPreview(context),
         ),
-      );
-    } else if (_currentSwipeDirection != null) {
-      // Logic for animating from the center page to a side page.
-      SwipeDirection effectiveDirection = _currentSwipeDirection!;
-      // Determine if a transition animation is actively running to a target page.
-      // This helps decide whether to show the preview or the actual incoming page.
-      bool isAnimatingToPageCompletion =
-          _swipeTransitionController.isAnimating &&
-              (_swipeTransitionController.status == AnimationStatus.forward);
+        edgeDetector,
+      ],
+    );
 
-      PageType? targetPageType =
-          _getPageTypeFromSwipeDirection(effectiveDirection);
-      if (targetPageType == null ||
-          _getPageWidgetByType(targetPageType) == null) {
-        // If target page is invalid, just show center page.
-        stackChildren.add(animatedCenterPage);
-        return Stack(children: stackChildren);
-      }
-
-      if (widget.showSidePagePreviews && !isAnimatingToPageCompletion) {
-        // If previews are enabled and not actively animating to completion,
-        // show the center page with the preview overlay.
-        stackChildren.add(animatedCenterPage);
-        if (animationProgress > 0) {
-          stackChildren.add(
-            Transform.scale(
-              scale: 1.0 - animationProgress, // Scale down center page.
-              alignment: Alignment.center,
-              child: Opacity(
-                opacity: lerpDouble(
-                  1.0, // Starts fully visible.
-                  widget.incomingPageOpacityStart, // Ends less visible.
-                  animationProgress,
-                )!,
-                child: _getPreviewWidgetOrBuildDefault(effectiveDirection),
-              ),
-            ),
-          );
-        }
-      } else {
-        // Otherwise (no previews, or animating to completion), show the
-        // center page moving out and the side page moving in.
-        Widget pageGoingOffScreen = widget.centerPage;
-        // Currently not scaling center page.
-        double currentScaleForOffScreen = 1.0;
-
-        // Calculate offset for the center page going off screen.
-        final centerEndOffset =
-            _getCenterPageEndOffset(effectiveDirection, size);
-        final offsetForOffScreen =
-            Offset.lerp(Offset.zero, centerEndOffset, animationProgress)!;
-
-        stackChildren.add(Transform.translate(
-          offset: offsetForOffScreen,
-          child: Transform.scale(
-            scale: currentScaleForOffScreen,
-            alignment: Alignment.center,
-            child: Opacity(
-              opacity: lerpDouble(
-                1.0, // Starts fully visible.
-
-                widget.incomingPageOpacityStart, // Ends less visible.
-                animationProgress,
-              )!,
-              child: pageGoingOffScreen,
-            ),
-          ),
-        ));
-
-        // Get the target side page widget.
-        Widget pageComingOnScreen = _getSwipingPageWidget(targetPageType)!;
-
-        // Calculate starting off-screen offset for the incoming side page.
-        final sideStartOffset = _getOffScreenOffset(effectiveDirection, size);
-
-        // Calculate current offset for the incoming side page.
-        final offsetForOnScreen = Offset.lerp(
-          sideStartOffset,
-          Offset.zero, // Ends at center.
-          animationProgress,
-        )!;
-
-        stackChildren.add(
-          Transform.translate(
-            offset: offsetForOnScreen,
-            child: Opacity(
-              opacity: lerpDouble(
-                widget.incomingPageOpacityStart, // Starts less visible.
-                1.0, // Ends fully visible.
-                animationProgress,
-              )!,
-              child: pageComingOnScreen,
-            ),
-          ),
-        );
-      }
-    } else {
-      // If no swipe is in progress, just display the animated center page.
-      stackChildren.add(animatedCenterPage);
+    final background = widget.backgroundColor;
+    if (background != null) {
+      content = ColoredBox(color: background, child: content);
+    }
+    if (widget.clipBehavior != Clip.none) {
+      content = ClipRect(clipBehavior: widget.clipBehavior, child: content);
     }
 
-    return Stack(children: stackChildren);
+    return _NavigatorBox(
+      fallbackSize: MediaQuery.maybeSizeOf(context) ?? Size.zero,
+      onLayout: (size) => _size = size,
+      child: Focus(
+        focusNode: _focusNode,
+        autofocus: widget.autofocus && widget.enableKeyboardShortcuts,
+        onKeyEvent: _handleKeyEvent,
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _handlePointerDown,
+          child: content,
+        ),
+      ),
+    );
+  }
+}
+
+/// Sizes the navigator to its constraints (falling back to [fallbackSize]
+/// on unbounded axes) and reports the size after each layout.
+///
+/// The size is only read by gestures and by transition frames built after
+/// the first layout, so recording it without a rebuild is safe.
+class _NavigatorBox extends SingleChildRenderObjectWidget {
+  const _NavigatorBox({
+    required this.fallbackSize,
+    required this.onLayout,
+    super.child,
+  });
+
+  final Size fallbackSize;
+  final ValueChanged<Size> onLayout;
+
+  @override
+  _RenderNavigatorBox createRenderObject(BuildContext context) =>
+      _RenderNavigatorBox(fallbackSize: fallbackSize, onLayout: onLayout);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderNavigatorBox renderObject,
+  ) {
+    renderObject
+      ..fallbackSize = fallbackSize
+      ..onLayout = onLayout;
+  }
+}
+
+class _RenderNavigatorBox extends RenderProxyBox {
+  _RenderNavigatorBox({
+    required Size fallbackSize,
+    required this.onLayout,
+  }) : _fallbackSize = fallbackSize;
+
+  ValueChanged<Size> onLayout;
+
+  Size get fallbackSize => _fallbackSize;
+  Size _fallbackSize;
+  set fallbackSize(Size value) {
+    if (value == _fallbackSize) return;
+    _fallbackSize = value;
+    if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight) {
+      markNeedsLayout();
+    }
+  }
+
+  Size _resolveSize(BoxConstraints constraints) {
+    return constraints.constrain(Size(
+      constraints.hasBoundedWidth ? constraints.maxWidth : fallbackSize.width,
+      constraints.hasBoundedHeight
+          ? constraints.maxHeight
+          : fallbackSize.height,
+    ));
+  }
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) =>
+      _resolveSize(constraints);
+
+  @override
+  void performLayout() {
+    size = _resolveSize(constraints);
+    child?.layout(BoxConstraints.tight(size));
+    onLayout(size);
   }
 }
